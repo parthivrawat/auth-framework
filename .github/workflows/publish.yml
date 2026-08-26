@@ -1,0 +1,256 @@
+name: Publish Packages
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Validate tag format
+        run: |
+          if [[ ! $GITHUB_REF =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid tag format. Must be v*.*.* (e.g., v1.0.0)"
+            exit 1
+          fi
+      
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      
+      - name: Check version in files
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          
+          # Check Python version
+          PYTHON_VERSION=$(grep '^version = ' python/pyproject.toml | cut -d'"' -f2)
+          if [ "$PYTHON_VERSION" != "$VERSION" ]; then
+            echo "Python version mismatch: $PYTHON_VERSION != $VERSION"
+            exit 1
+          fi
+          
+          # Check TypeScript version
+          TS_VERSION=$(node -p "require('./typescript/package.json').version")
+          if [ "$TS_VERSION" != "$VERSION" ]; then
+            echo "TypeScript version mismatch: $TS_VERSION != $VERSION"
+            exit 1
+          fi
+          
+          echo "All versions match: $VERSION"
+
+  test-all:
+    name: Run All Tests
+    needs: validate
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Test Python
+        run: |
+          cd python
+          pip install -e ".[dev]"
+          pytest test_auth_framework.py -v
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Test TypeScript
+        run: |
+          cd typescript
+          npm ci
+          npm test
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      
+      - name: Test Go
+        run: |
+          cd go
+          go test -v ./...
+
+  publish-python:
+    name: Publish to PyPI
+    needs: test-all
+    runs-on: ubuntu-latest
+    environment: release
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+      
+      - name: Build package
+        run: |
+          cd python
+          python -m build
+      
+      - name: Check package
+        run: |
+          cd python
+          twine check dist/*
+      
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          cd python
+          twine upload dist/*
+
+  publish-npm:
+    name: Publish to NPM
+    needs: test-all
+    runs-on: ubuntu-latest
+    environment: release
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      
+      - name: Install dependencies
+        run: |
+          cd typescript
+          npm ci
+      
+      - name: Build package
+        run: |
+          cd typescript
+          npm run build
+      
+      - name: Publish to NPM
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          cd typescript
+          npm publish --access public
+
+  verify-go:
+    name: Verify Go Module
+    needs: test-all
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      
+      - name: Verify module
+        run: |
+          cd go
+          go mod verify
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+      
+      - name: Trigger pkg.go.dev indexing
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          curl -f "https://proxy.golang.org/github.com/parthivrawat/auth-framework/@v/${VERSION}.info" || true
+
+  create-release:
+    name: Create GitHub Release
+    needs: [publish-python, publish-npm, verify-go]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      
+      - name: Generate release notes
+        id: notes
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          
+          # Extract changelog for this version
+          NOTES=$(awk "/## \[${VERSION}\]/,/## \[/" python/CHANGELOG.md | sed '1d;$d')
+          
+          # Create release notes
+          cat > release_notes.md << EOF
+          # Auth & Authorization Framework v${VERSION}
+          
+          ## Python (PyPI)
+          \`\`\`bash
+          pip install auth-framework-py==${VERSION}
+          \`\`\`
+          
+          ## TypeScript (NPM)
+          \`\`\`bash
+          npm install @parthivrawat/auth-framework@${VERSION}
+          \`\`\`
+          
+          ## Go (pkg.go.dev)
+          \`\`\`bash
+          go get github.com/parthivrawat/auth-framework@v${VERSION}
+          \`\`\`
+          
+          ## Changes
+          
+          ${NOTES}
+          
+          ## Links
+          
+          - [Python Package](https://pypi.org/project/auth-framework-py/${VERSION}/)
+          - [NPM Package](https://www.npmjs.com/package/@parthivrawat/auth-framework/v/${VERSION})
+          - [Go Package](https://pkg.go.dev/github.com/parthivrawat/auth-framework@v${VERSION})
+          - [Documentation](https://github.com/parthivrawat/auth-framework#readme)
+          EOF
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify:
+    name: Notify Release
+    needs: create-release
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      
+      - name: Notify (placeholder)
+        run: |
+          echo "Release v${{ steps.version.outputs.VERSION }} published successfully!"
+          echo "Add notification integrations here (Slack, Discord, Email, etc.)"
