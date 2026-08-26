@@ -1,0 +1,7 @@
+include README.md
+include LICENSE
+include CHANGELOG.md
+include pyproject.toml
+recursive-include auth_framework *.py
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
