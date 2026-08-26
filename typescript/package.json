@@ -1,0 +1,77 @@
+{
+  "name": "@parthivrawat/auth-framework",
+  "version": "1.0.0",
+  "description": "A unified identity, session, token, and permission framework with pluggable providers",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "example": "tsx src/example.ts",
+    "lint": "tsc --noEmit",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "prepublishOnly": "npm run build && npm test",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "auth",
+    "authentication",
+    "authorization",
+    "jwt",
+    "oauth2",
+    "rbac",
+    "abac",
+    "security",
+    "typescript",
+    "session",
+    "token",
+    "policy",
+    "permissions",
+    "multi-tenant"
+  ],
+  "author": {
+    "name": "Parthiv Rawat",
+    "email": "parthiv05022000@gmail.com"
+  },
+  "contributors": [],
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@vitest/coverage-v8": "^1.6.1",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3",
+    "vitest": "^1.6.1"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/parthivrawat/auth-framework.git",
+    "directory": "typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/parthivrawat/auth-framework/issues"
+  },
+  "homepage": "https://github.com/parthivrawat/auth-framework/tree/main/typescript#readme",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
