@@ -37,14 +37,14 @@ cargo build
 
 ```toml
 [dependencies]
-auth-framework = { git = "https://github.com/parthivrawat/auth-framework" }
+auth-framework-rs = { git = "https://github.com/parthivrawat/auth-framework" }
 ```
 
 ## Quick Start
 
 ```rust
 use std::collections::HashMap;
-use auth_framework::{Auth, LocalAuthProvider, TokenType};
+use auth_framework_rs::{Auth, LocalAuthProvider, TokenType};
 
 fn main() {
     let auth = Auth::new("secret_key", TokenType::JWT);

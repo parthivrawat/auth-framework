@@ -1,5 +1,5 @@
 [package]
-name = "auth-framework"
+name = "auth-framework-rs"
 version = "1.0.1"
 edition = "2021"
 authors = ["Parthiv Rawat <parthiv05022000@gmail.com>"]

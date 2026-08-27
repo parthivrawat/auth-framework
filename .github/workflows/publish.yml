@@ -258,7 +258,7 @@ jobs:
           
           ## Rust (crates.io)
           \`\`\`bash
-          cargo add auth-framework@${VERSION}
+          cargo add auth-framework-rs@${VERSION}
           \`\`\`
           
           ## Changes
@@ -270,7 +270,7 @@ jobs:
           - [Python Package](https://pypi.org/project/auth-framework-py/${VERSION}/)
           - [NPM Package](https://www.npmjs.com/package/@prthv-rwt/auth-framework/v/${VERSION})
           - [Go Package](https://pkg.go.dev/github.com/parthivrawat/auth-framework@v${VERSION})
-          - [Rust Package](https://crates.io/crates/auth-framework/${VERSION})
+          - [Rust Package](https://crates.io/crates/auth-framework-rs/${VERSION})
           - [Documentation](https://github.com/parthivrawat/auth-framework#readme)
           EOF
       

@@ -92,7 +92,7 @@ git push origin v1.0.0
 
 ### Rust (crates.io)
 
-**Package Name**: `auth-framework`
+**Package Name**: `auth-framework-rs`
 
 **Files Added/Updated**:
 - ✅ `Cargo.toml` - Package configuration with dependencies
@@ -196,7 +196,7 @@ cargo publish
 
 | Feature | Python | TypeScript | Go | Rust |
 |---------|--------|------------|-----|------|
-| **Package Name** | auth-framework-py | @prthv-rwt/auth-framework | github.com/parthivrawat/auth-framework | auth-framework |
+| **Package Name** | auth-framework-py | @prthv-rwt/auth-framework | github.com/parthivrawat/auth-framework | auth-framework-rs |
 | **Version** | 1.0.0 | 1.0.0 | v1.0.0 (git tag) | 1.0.0 |
 | **License** | MIT | MIT | MIT | MIT |
 | **Min Version** | Python 3.8+ | Node 16+ | Go 1.21+ | Rust 1.70+ |
@@ -235,7 +235,7 @@ cargo publish
 - **PyPI**: https://pypi.org/project/auth-framework-py/
 - **NPM**: https://www.npmjs.com/package/@prthv-rwt/auth-framework
 - **pkg.go.dev**: https://pkg.go.dev/github.com/parthivrawat/auth-framework
-- **crates.io**: https://crates.io/crates/auth-framework
+- **crates.io**: https://crates.io/crates/auth-framework-rs
 
 ### Installation Commands
 
@@ -250,7 +250,7 @@ npm install @prthv-rwt/auth-framework
 go get github.com/parthivrawat/auth-framework@latest
 
 # Rust
-cargo add auth-framework
+cargo add auth-framework-rs
 ```
 
 ---

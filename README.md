@@ -130,7 +130,7 @@ func main() {
 
 ```rust
 use std::collections::HashMap;
-use auth_framework::{Auth, LocalAuthProvider, TokenType};
+use auth_framework_rs::{Auth, LocalAuthProvider, TokenType};
 
 fn main() {
     // Initialize
@@ -224,7 +224,7 @@ go build
 
 **Production:**
 ```bash
-cargo add auth-framework
+cargo add auth-framework-rs
 ```
 
 **Development:**
