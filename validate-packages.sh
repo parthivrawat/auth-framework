@@ -253,7 +253,7 @@ fi
 
 # Check module path
 MODULE_PATH=$(grep '^module ' go.mod | awk '{print $2}')
-if [ "$MODULE_PATH" != "github.com/parthivrawat/auth-framework" ]; then
+if [ "$MODULE_PATH" != "github.com/parthivrawat/auth-framework/go" ]; then
     error "Incorrect module path: $MODULE_PATH"
 else
     success "Module path correct: $MODULE_PATH"

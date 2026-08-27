@@ -75,7 +75,7 @@
 // # Documentation
 //
 // For complete documentation, visit:
-// https://pkg.go.dev/github.com/parthivrawat/auth-framework
+// https://pkg.go.dev/github.com/parthivrawat/auth-framework/go
 //
 // # Source Code
 //

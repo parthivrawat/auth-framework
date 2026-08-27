@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Rust implementation to the multi-language Auth & Authorization Framework
 - GitHub Actions CI and publish support for the Rust crate
 
+## [1.0.2] - 2026-08-27
+
+### Fixed
+- Corrected Go module path to `github.com/parthivrawat/auth-framework/go` so the package imports correctly and appears on pkg.go.dev.
+
 ## [Unreleased]
 
 ### Planned
@@ -54,5 +59,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - gRPC interceptors
 - Rate limiting for authentication endpoints
 
+[1.0.2]: https://github.com/parthivrawat/auth-framework/releases/tag/go/v1.0.2
 [1.0.1]: https://github.com/parthivrawat/auth-framework/releases/tag/v1.0.1
 [1.0.0]: https://github.com/parthivrawat/auth-framework/releases/tag/v1.0.0

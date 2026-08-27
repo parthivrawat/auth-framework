@@ -28,13 +28,13 @@ A unified identity, session, token, and permission framework with pluggable prov
 ### Using Go Modules (Recommended)
 
 ```bash
-go get github.com/parthivrawat/auth-framework@latest
+go get github.com/parthivrawat/auth-framework/go@latest
 ```
 
 Or add to your `go.mod`:
 
 ```go
-require github.com/parthivrawat/auth-framework v1.0.0
+require github.com/parthivrawat/auth-framework/go v1.0.2
 ```
 
 Then run:
@@ -58,7 +58,7 @@ package main
 
 import (
     "fmt"
-    auth "github.com/parthivrawat/auth-framework"
+    auth "github.com/parthivrawat/auth-framework/go"
 )
 
 func main() {

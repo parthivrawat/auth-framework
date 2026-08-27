@@ -164,28 +164,28 @@ Go modules are published by pushing tags to GitHub. No separate upload needed!
 
 ```bash
 # From repository root
-git tag v1.0.0
-git push origin v1.0.0
+git tag go/v1.0.2
+git push origin go/v1.0.2
 ```
 
 ### Trigger pkg.go.dev Indexing
 
-Visit: https://pkg.go.dev/github.com/parthivrawat/auth-framework
+Visit: https://pkg.go.dev/github.com/parthivrawat/auth-framework/go
 
 Or use:
 
 ```bash
-curl https://proxy.golang.org/github.com/parthivrawat/auth-framework/@v/v1.0.0.info
+curl https://proxy.golang.org/github.com/parthivrawat/auth-framework/go/@v/v1.0.2.info
 ```
 
 ### Verify
 
 ```bash
 # Test installation
-go get github.com/parthivrawat/auth-framework@v1.0.0
+go get github.com/parthivrawat/auth-framework/go@v1.0.2
 
 # Check documentation
-open https://pkg.go.dev/github.com/parthivrawat/auth-framework@v1.0.0
+open https://pkg.go.dev/github.com/parthivrawat/auth-framework/go@v1.0.2
 ```
 
 ### Best Practices

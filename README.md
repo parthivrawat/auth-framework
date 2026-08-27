@@ -98,7 +98,7 @@ package main
 
 import (
     "fmt"
-    auth "github.com/parthivrawat/auth-framework"
+    auth "github.com/parthivrawat/auth-framework/go"
 )
 
 func main() {
@@ -207,7 +207,7 @@ npm run build
 
 **Production:**
 ```bash
-go get github.com/parthivrawat/auth-framework@latest
+go get github.com/parthivrawat/auth-framework/go@latest
 ```
 
 **Development:**
@@ -218,7 +218,7 @@ go mod download
 go build
 ```
 
-📦 [View on pkg.go.dev](https://pkg.go.dev/github.com/parthivrawat/auth-framework)
+📦 [View on pkg.go.dev](https://pkg.go.dev/github.com/parthivrawat/auth-framework/go)
 
 ### Rust (crates.io)
 

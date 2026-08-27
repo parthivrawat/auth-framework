@@ -1,4 +1,4 @@
-module github.com/parthivrawat/auth-framework
+module github.com/parthivrawat/auth-framework/go
 
 go 1.21
 

@@ -82,7 +82,7 @@ pip install auth-framework-py==1.0.1
 npm info @prthv-rwt/auth-framework@1.0.1
 
 # Check pkg.go.dev
-go get github.com/parthivrawat/auth-framework@v1.0.1
+go get github.com/parthivrawat/auth-framework/go@v1.0.2
 ```
 
 ---
@@ -198,7 +198,7 @@ Common issues:
 
 - **PyPI**: https://pypistats.org/packages/auth-framework-py
 - **NPM**: https://www.npmjs.com/package/@prthv-rwt/auth-framework
-- **Go**: https://pkg.go.dev/github.com/parthivrawat/auth-framework?tab=importedby
+- **Go**: https://pkg.go.dev/github.com/parthivrawat/auth-framework/go?tab=importedby
 
 ### Issue Tracking
 

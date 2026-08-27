@@ -66,7 +66,7 @@ npm publish --access public
 
 ### Go (pkg.go.dev)
 
-**Package Name**: `github.com/parthivrawat/auth-framework`
+**Package Name**: `github.com/parthivrawat/auth-framework/go`
 
 **Files Added/Updated**:
 - ✅ `go.mod` - Module definition with dependencies
@@ -83,8 +83,8 @@ npm publish --access public
 
 **Publishing Command**:
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag go/v1.0.2
+git push origin go/v1.0.2
 # pkg.go.dev indexes automatically
 ```
 
@@ -196,7 +196,7 @@ cargo publish
 
 | Feature | Python | TypeScript | Go | Rust |
 |---------|--------|------------|-----|------|
-| **Package Name** | auth-framework-py | @prthv-rwt/auth-framework | github.com/parthivrawat/auth-framework | auth-framework-rs |
+| **Package Name** | auth-framework-py | @prthv-rwt/auth-framework | github.com/parthivrawat/auth-framework/go | auth-framework-rs |
 | **Version** | 1.0.0 | 1.0.0 | v1.0.0 (git tag) | 1.0.0 |
 | **License** | MIT | MIT | MIT | MIT |
 | **Min Version** | Python 3.8+ | Node 16+ | Go 1.21+ | Rust 1.70+ |
@@ -234,7 +234,7 @@ cargo publish
 
 - **PyPI**: https://pypi.org/project/auth-framework-py/
 - **NPM**: https://www.npmjs.com/package/@prthv-rwt/auth-framework
-- **pkg.go.dev**: https://pkg.go.dev/github.com/parthivrawat/auth-framework
+- **pkg.go.dev**: https://pkg.go.dev/github.com/parthivrawat/auth-framework/go
 - **crates.io**: https://crates.io/crates/auth-framework-rs
 
 ### Installation Commands
@@ -247,7 +247,7 @@ pip install auth-framework-py
 npm install @prthv-rwt/auth-framework
 
 # Go
-go get github.com/parthivrawat/auth-framework@latest
+go get github.com/parthivrawat/auth-framework/go@latest
 
 # Rust
 cargo add auth-framework-rs
@@ -282,9 +282,9 @@ cargo add auth-framework-rs
 1. **Update versions** in all package files
 2. **Update CHANGELOGs** with release notes
 3. **Run validation**: `./validate-packages.sh` or `.\validate-packages.ps1`
-4. **Commit changes**: `git commit -am "Release v1.0.0"`
-5. **Create tag**: `git tag v1.0.0`
-6. **Push tag**: `git push origin v1.0.0`
+4. **Commit changes**: `git commit -am "Release v1.0.2"`
+5. **Create tag**: `git tag v1.0.2`
+6. **Push tag**: `git push origin v1.0.2`
 7. **GitHub Actions** automatically:
    - Runs all tests
    - Validates versions
