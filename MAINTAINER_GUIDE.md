@@ -13,6 +13,7 @@ Quick reference for maintaining and publishing the Auth & Authorization Framewor
 cd python && pytest test_auth_framework.py -v
 cd ../typescript && npm test
 cd ../go && go test -v ./...
+cd ../rust && cargo test
 
 # Validate packages before committing
 ./validate-packages.sh  # Linux/macOS
@@ -29,12 +30,14 @@ cd ../go && go test -v ./...
 # Update version in all package files
 # - python/pyproject.toml
 # - typescript/package.json
+# - rust/Cargo.toml
 # (Go uses git tags only)
 
 # Update CHANGELOGs
 # - python/CHANGELOG.md
 # - typescript/CHANGELOG.md
 # - go/CHANGELOG.md
+# - rust/CHANGELOG.md
 ```
 
 ### 2. Validate
@@ -89,7 +92,7 @@ go get github.com/parthivrawat/auth-framework@v1.0.1
 ### Adding a New Feature
 
 1. **Write tests first** (TDD)
-2. **Implement in all three languages** (Python, TypeScript, Go)
+2. **Implement in all four languages** (Python, TypeScript, Go, Rust)
 3. **Update documentation**
 4. **Run validation**
 5. **Create PR**
@@ -115,7 +118,7 @@ go get github.com/parthivrawat/auth-framework@v1.0.1
 
 ### Pre-Release Checklist
 
-- [ ] All tests passing (92/92)
+- [ ] All tests passing (110/110)
 - [ ] Version bumped in all files
 - [ ] CHANGELOG updated
 - [ ] Documentation updated
@@ -151,6 +154,10 @@ npm test -- --reporter=verbose
 # Go
 cd go
 go test -v -race ./...
+
+# Rust
+cd rust
+cargo test -- --nocapture
 ```
 
 ### Build Failing
@@ -167,6 +174,10 @@ npm run build -- --verbose
 # Go
 cd go
 go build -v ./...
+
+# Rust
+cd rust
+cargo build -v
 ```
 
 ### Publishing Failing
@@ -221,6 +232,10 @@ npm update
 cd go
 go get -u ./...
 go mod tidy
+
+# Rust
+cd rust
+cargo update
 ```
 
 ---

@@ -1,0 +1,17 @@
+[package]
+name = "auth-framework"
+version = "1.0.0"
+edition = "2021"
+authors = ["Parthiv Rawat <parthiv05022000@gmail.com>"]
+license = "MIT"
+description = "A unified identity, session, token, and permission framework with pluggable providers"
+repository = "https://github.com/parthivrawat/auth-framework"
+homepage = "https://github.com/parthivrawat/auth-framework/tree/main/rust"
+keywords = ["auth", "authentication", "authorization", "jwt", "rbac"]
+categories = ["authentication", "web-programming"]
+
+[dependencies]
+base64 = "0.21"
+ring = "0.17"
+serde_json = "1.0"
+subtle = "2"

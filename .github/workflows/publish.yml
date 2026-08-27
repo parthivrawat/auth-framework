@@ -45,6 +45,13 @@ jobs:
             exit 1
           fi
           
+          # Check Rust version
+          RUST_VERSION=$(grep '^version = ' rust/Cargo.toml | cut -d'"' -f2)
+          if [ "$RUST_VERSION" != "$VERSION" ]; then
+            echo "Rust version mismatch: $RUST_VERSION != $VERSION"
+            exit 1
+          fi
+          
           echo "All versions match: $VERSION"
 
   test-all:
@@ -86,6 +93,14 @@ jobs:
         run: |
           cd go
           go test -v ./...
+      
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Test Rust
+        run: |
+          cd rust
+          cargo test --verbose
 
   publish-python:
     name: Publish to PyPI
@@ -156,6 +171,25 @@ jobs:
           cd typescript
           npm publish --access public
 
+  publish-rust:
+    name: Publish to crates.io
+    needs: test-all
+    runs-on: ubuntu-latest
+    environment: release
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cd rust
+          cargo publish --token $CARGO_REGISTRY_TOKEN
+
   verify-go:
     name: Verify Go Module
     needs: test-all
@@ -183,7 +217,7 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    needs: [publish-python, publish-npm, verify-go]
+    needs: [publish-python, publish-npm, publish-rust, verify-go]
     runs-on: ubuntu-latest
     
     steps:
@@ -222,6 +256,11 @@ jobs:
           go get github.com/parthivrawat/auth-framework@v${VERSION}
           \`\`\`
           
+          ## Rust (crates.io)
+          \`\`\`bash
+          cargo add auth-framework@${VERSION}
+          \`\`\`
+          
           ## Changes
           
           ${NOTES}
@@ -231,6 +270,7 @@ jobs:
           - [Python Package](https://pypi.org/project/auth-framework-py/${VERSION}/)
           - [NPM Package](https://www.npmjs.com/package/@prthv-rwt/auth-framework/v/${VERSION})
           - [Go Package](https://pkg.go.dev/github.com/parthivrawat/auth-framework@v${VERSION})
+          - [Rust Package](https://crates.io/crates/auth-framework/${VERSION})
           - [Documentation](https://github.com/parthivrawat/auth-framework#readme)
           EOF
       

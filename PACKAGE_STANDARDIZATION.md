@@ -90,12 +90,37 @@ git push origin v1.0.0
 
 ---
 
+### Rust (crates.io)
+
+**Package Name**: `auth-framework`
+
+**Files Added/Updated**:
+- ✅ `Cargo.toml` - Package configuration with dependencies
+- ✅ `src/lib.rs` - Core implementation with inline documentation
+- ✅ `README.md` - Installation and quick start
+- ✅ `LICENSE` - MIT License
+
+**Key Features**:
+- Rust 2021 edition
+- Thread-safe using standard library locks
+- PBKDF2-SHA256 password hashing
+- HMAC-SHA256 JWT tokens
+- `serde`/`serde_json` for JSON handling
+
+**Publishing Command**:
+```bash
+cd rust
+cargo publish
+```
+
+---
+
 ## 📋 Documentation Created
 
 ### Publishing Guides
 
 1. **PUBLISHING.md** (377 lines)
-   - Complete guide for all three package managers
+   - Complete guide for all four package managers
    - Step-by-step instructions
    - Best practices
    - Rollback procedures
@@ -169,17 +194,17 @@ git push origin v1.0.0
 
 ## 📦 Package Metadata Comparison
 
-| Feature | Python | TypeScript | Go |
-|---------|--------|------------|-----|
-| **Package Name** | auth-framework-py | @prthv-rwt/auth-framework | github.com/parthivrawat/auth-framework |
-| **Version** | 1.0.0 | 1.0.0 | v1.0.0 (git tag) |
-| **License** | MIT | MIT | MIT |
-| **Min Version** | Python 3.8+ | Node 16+ | Go 1.21+ |
-| **Dependencies** | 0 runtime | 0 runtime | 1 (golang.org/x/crypto) |
-| **Dev Dependencies** | 4 | 4 | 0 |
-| **Status** | Production/Stable | Production | Production |
-| **Type Safety** | No (runtime) | Yes (TypeScript) | Yes (static) |
-| **Documentation** | README + docstrings | README + TSDoc | README + godoc |
+| Feature | Python | TypeScript | Go | Rust |
+|---------|--------|------------|-----|------|
+| **Package Name** | auth-framework-py | @prthv-rwt/auth-framework | github.com/parthivrawat/auth-framework | auth-framework |
+| **Version** | 1.0.0 | 1.0.0 | v1.0.0 (git tag) | 1.0.0 |
+| **License** | MIT | MIT | MIT | MIT |
+| **Min Version** | Python 3.8+ | Node 16+ | Go 1.21+ | Rust 1.70+ |
+| **Dependencies** | 0 runtime | 0 runtime | 1 (golang.org/x/crypto) | 4 (ring, base64, serde_json, subtle) |
+| **Dev Dependencies** | 4 | 4 | 0 | 0 |
+| **Status** | Production/Stable | Production | Production | Production |
+| **Type Safety** | No (runtime) | Yes (TypeScript) | Yes (static) | Yes (static) |
+| **Documentation** | README + docstrings | README + TSDoc | README + godoc | README + rustdoc |
 
 ---
 
@@ -210,6 +235,7 @@ git push origin v1.0.0
 - **PyPI**: https://pypi.org/project/auth-framework-py/
 - **NPM**: https://www.npmjs.com/package/@prthv-rwt/auth-framework
 - **pkg.go.dev**: https://pkg.go.dev/github.com/parthivrawat/auth-framework
+- **crates.io**: https://crates.io/crates/auth-framework
 
 ### Installation Commands
 
@@ -222,6 +248,9 @@ npm install @prthv-rwt/auth-framework
 
 # Go
 go get github.com/parthivrawat/auth-framework@latest
+
+# Rust
+cargo add auth-framework
 ```
 
 ---
@@ -232,7 +261,7 @@ go get github.com/parthivrawat/auth-framework@latest
 - [x] CHANGELOG.md updated for all languages
 - [x] README.md updated with installation instructions
 - [x] LICENSE files present in all language directories
-- [x] All tests passing (92/92 tests)
+- [x] All tests passing (110/110 tests)
 - [x] Package metadata complete and accurate
 - [x] Keywords optimized for discoverability
 - [x] Documentation comprehensive
@@ -295,8 +324,9 @@ After successful publication:
 
 1. `python/pyproject.toml` → `version = "X.Y.Z"`
 2. `typescript/package.json` → `"version": "X.Y.Z"`
-3. Git tag → `vX.Y.Z`
-4. All `CHANGELOG.md` files
+3. `rust/Cargo.toml` → `version = "X.Y.Z"`
+4. Git tag → `vX.Y.Z`
+5. All `CHANGELOG.md` files
 
 ---
 

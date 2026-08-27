@@ -115,6 +115,33 @@ jobs:
           cd go
           go build -v ./...
 
+  test-rust:
+    name: Test Rust
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        rust-toolchain: [stable]
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust-toolchain }}
+          components: rustfmt, clippy
+      
+      - name: Run tests
+        run: |
+          cd rust
+          cargo test --verbose
+      
+      - name: Build
+        run: |
+          cd rust
+          cargo build --verbose
+
   lint:
     name: Lint and Format Check
     runs-on: ubuntu-latest
@@ -157,6 +184,17 @@ jobs:
           go vet ./...
           # Check if gofmt made changes
           test -z "$(gofmt -l .)"
+      
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      
+      - name: Rust lint
+        run: |
+          cd rust
+          cargo fmt -- --check
+          cargo clippy -- -D warnings
 
   security:
     name: Security Scan

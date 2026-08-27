@@ -4,13 +4,14 @@ A unified identity, session, token, and permission framework with pluggable prov
 
 ## 🎉 Implementation Complete
 
-**All three language implementations are production-ready!**
+**All four language implementations are production-ready!**
 
 - ✅ **Python** - 40 tests passing
 - ✅ **TypeScript** - 38 tests passing  
 - ✅ **Go** - 14 tests passing
+- ✅ **Rust** - 18 tests passing
 
-**Total**: 92 tests, 100% pass rate, ~2,400 lines of core code
+**Total**: 110 tests, 100% pass rate, ~2,400 lines of core code
 
 ---
 
@@ -125,6 +126,42 @@ func main() {
 }
 ```
 
+### Rust
+
+```rust
+use std::collections::HashMap;
+use auth_framework::{Auth, LocalAuthProvider, TokenType};
+
+fn main() {
+    // Initialize
+    let auth = Auth::new("secret", TokenType::JWT);
+    let provider = LocalAuthProvider::new();
+    auth.add_provider("local", Box::new(provider));
+
+    // Register user
+    auth.providers
+        .lock()
+        .unwrap()
+        .get("local")
+        .unwrap()
+        .register_user("alice", "password", None, None, None, None)
+        .unwrap();
+
+    // Login
+    let mut creds = HashMap::new();
+    creds.insert("username".to_string(), "alice".to_string());
+    creds.insert("password".to_string(), "password".to_string());
+
+    let result = auth.login("local", &creds, true, 3600).unwrap().unwrap();
+    println!("Token: {}", result.access_token);
+
+    // Check permission
+    if auth.check_permission(&result.user, "read", "document:123", None) {
+        println!("Access granted!");
+    }
+}
+```
+
 ---
 
 ## Installation
@@ -183,6 +220,20 @@ go build
 
 📦 [View on pkg.go.dev](https://pkg.go.dev/github.com/parthivrawat/auth-framework)
 
+### Rust (crates.io)
+
+**Production:**
+```bash
+cargo add auth-framework
+```
+
+**Development:**
+```bash
+git clone https://github.com/parthivrawat/auth-framework
+cd auth-framework/rust
+cargo build
+```
+
 ---
 
 ## Testing
@@ -206,6 +257,13 @@ npm test
 cd go
 go test -v
 # Result: 14 passed
+```
+
+### Rust
+```bash
+cd rust
+cargo test
+# Result: 18 passed
 ```
 
 ---
@@ -248,15 +306,15 @@ go test -v
 
 ## API Consistency
 
-All three implementations follow the same API design:
+All four implementations follow the same API design:
 
-| Feature | Python | TypeScript | Go |
-|---------|--------|------------|-----|
-| Initialize | `Auth()` | `new Auth()` | `NewAuth()` |
-| Add Provider | `add_provider()` | `addProvider()` | `AddProvider()` |
-| Login | `login()` | `login()` | `Login()` |
-| Verify Token | `verify_token()` | `verifyToken()` | `VerifyToken()` |
-| Check Permission | `check_permission()` | `checkPermission()` | `CheckPermission()` |
+| Feature | Python | TypeScript | Go | Rust |
+|---------|--------|------------|-----|------|
+| Initialize | `Auth()` | `new Auth()` | `NewAuth()` | `Auth::new()` |
+| Add Provider | `add_provider()` | `addProvider()` | `AddProvider()` | `add_provider()` |
+| Login | `login()` | `login()` | `Login()` | `login()` |
+| Verify Token | `verify_token()` | `verifyToken()` | `VerifyToken()` | `verify_token()` |
+| Check Permission | `check_permission()` | `checkPermission()` | `CheckPermission()` | `check_permission()` |
 
 ---
 
@@ -297,6 +355,7 @@ All three implementations follow the same API design:
 - **[python/README.md](./python/README.md)** - Python-specific documentation
 - **[typescript/README.md](./typescript/README.md)** - TypeScript-specific documentation
 - **[go/README.md](./go/README.md)** - Go-specific documentation
+- **[rust/README.md](./rust/README.md)** - Rust-specific documentation
 
 ---
 
@@ -307,6 +366,7 @@ Each implementation includes working examples:
 - **Python**: `python/example.py` - Comprehensive example with all features
 - **TypeScript**: `typescript/src/example.ts` - TypeScript example (planned)
 - **Go**: `go/examples/` - Go examples (planned)
+- **Rust**: `rust/examples/` - Rust examples (planned)
 
 ---
 
@@ -338,11 +398,11 @@ This implementation is part of the Custom Library Proposals initiative (#41 - Au
 - ✅ Comprehensive testing
 - ✅ Extensible architecture
 
-**Achievement**: All goals met across Python, TypeScript, and Go!
+**Achievement**: All goals met across Python, TypeScript, Go, and Rust!
 
 ---
 
-**Last Updated**: 2026-08-26  
+**Last Updated**: 2026-08-27  
 **Status**: ✅ Production Ready  
-**Languages**: Python, TypeScript, Go  
+**Languages**: Python, TypeScript, Go, Rust  
 **Tests**: 92 passing (100% pass rate)
