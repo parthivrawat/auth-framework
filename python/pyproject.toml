@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "auth-framework-py"
-version = "1.0.0"
+version = "1.0.1"
 description = "A unified identity, session, token, and permission framework with pluggable providers"
 readme = "README.md"
 authors = [

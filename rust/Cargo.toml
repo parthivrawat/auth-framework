@@ -1,6 +1,6 @@
 [package]
 name = "auth-framework"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 authors = ["Parthiv Rawat <parthiv05022000@gmail.com>"]
 license = "MIT"

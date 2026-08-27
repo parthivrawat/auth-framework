@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cryptographically secure random token generation
 - Server-side token revocation list
 
+## [1.0.1] - 2026-08-27
+
+### Added
+- Added Rust implementation to the multi-language Auth & Authorization Framework
+- GitHub Actions CI and publish support for the Rust crate
+
 ## [Unreleased]
 
 ### Planned
@@ -42,4 +48,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Passwordless authentication
 - Social login providers (Google, GitHub, etc.)
 
+[1.0.1]: https://github.com/parthivrawat/auth-framework/releases/tag/v1.0.1
 [1.0.0]: https://github.com/parthivrawat/auth-framework/releases/tag/v1.0.0
