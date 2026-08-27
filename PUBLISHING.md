@@ -107,7 +107,7 @@ npm run build
 npm pack
 
 # Test installation
-npm install parthivrawat-auth-framework-1.0.0.tgz
+npm install prthv-rwt-auth-framework-1.0.0.tgz
 ```
 
 ### Publish to NPM
@@ -120,7 +120,7 @@ npm publish --dry-run
 npm publish --access public
 
 # Verify
-npm info @parthivrawat/auth-framework
+npm info @prthv-rwt/auth-framework
 ```
 
 ### Using NPM Tokens
@@ -276,10 +276,10 @@ Can deprecate or unpublish (within 72 hours):
 
 ```bash
 # Deprecate
-npm deprecate @parthivrawat/auth-framework@1.0.0 "This version has issues, use 1.0.1"
+npm deprecate @prthv-rwt/auth-framework@1.0.0 "This version has issues, use 1.0.1"
 
 # Unpublish (within 72 hours only)
-npm unpublish @parthivrawat/auth-framework@1.0.0
+npm unpublish @prthv-rwt/auth-framework@1.0.0
 ```
 
 ### Go

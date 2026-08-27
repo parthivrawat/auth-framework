@@ -37,19 +37,19 @@ A unified identity, session, token, and permission framework with pluggable prov
 ### From NPM (Recommended)
 
 ```bash
-npm install @parthivrawat/auth-framework
+npm install @prthv-rwt/auth-framework
 ```
 
 Or with Yarn:
 
 ```bash
-yarn add @parthivrawat/auth-framework
+yarn add @prthv-rwt/auth-framework
 ```
 
 Or with pnpm:
 
 ```bash
-pnpm add @parthivrawat/auth-framework
+pnpm add @prthv-rwt/auth-framework
 ```
 
 ### From Source

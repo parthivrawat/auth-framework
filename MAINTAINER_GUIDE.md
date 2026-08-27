@@ -76,7 +76,7 @@ GitHub Actions will automatically:
 pip install auth-framework-py==1.0.1
 
 # Check NPM
-npm info @parthivrawat/auth-framework@1.0.1
+npm info @prthv-rwt/auth-framework@1.0.1
 
 # Check pkg.go.dev
 go get github.com/parthivrawat/auth-framework@v1.0.1
@@ -186,7 +186,7 @@ Common issues:
 ### Package Statistics
 
 - **PyPI**: https://pypistats.org/packages/auth-framework-py
-- **NPM**: https://www.npmjs.com/package/@parthivrawat/auth-framework
+- **NPM**: https://www.npmjs.com/package/@prthv-rwt/auth-framework
 - **Go**: https://pkg.go.dev/github.com/parthivrawat/auth-framework?tab=importedby
 
 ### Issue Tracking

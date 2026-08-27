@@ -1,5 +1,5 @@
 {
-  "name": "@parthivrawat/auth-framework",
+  "name": "@prthv-rwt/auth-framework",
   "version": "1.0.0",
   "description": "A unified identity, session, token, and permission framework with pluggable providers",
   "main": "dist/index.js",

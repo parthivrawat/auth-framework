@@ -214,7 +214,7 @@ jobs:
           
           ## TypeScript (NPM)
           \`\`\`bash
-          npm install @parthivrawat/auth-framework@${VERSION}
+          npm install @prthv-rwt/auth-framework@${VERSION}
           \`\`\`
           
           ## Go (pkg.go.dev)
@@ -229,7 +229,7 @@ jobs:
           ## Links
           
           - [Python Package](https://pypi.org/project/auth-framework-py/${VERSION}/)
-          - [NPM Package](https://www.npmjs.com/package/@parthivrawat/auth-framework/v/${VERSION})
+          - [NPM Package](https://www.npmjs.com/package/@prthv-rwt/auth-framework/v/${VERSION})
           - [Go Package](https://pkg.go.dev/github.com/parthivrawat/auth-framework@v${VERSION})
           - [Documentation](https://github.com/parthivrawat/auth-framework#readme)
           EOF

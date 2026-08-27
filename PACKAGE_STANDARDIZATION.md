@@ -37,7 +37,7 @@ python -m twine upload dist/*
 
 ### TypeScript (NPM)
 
-**Package Name**: `@parthivrawat/auth-framework`
+**Package Name**: `@prthv-rwt/auth-framework`
 
 **Files Added/Updated**:
 - ✅ `package.json` - Scoped package with dual exports (CJS/ESM)
@@ -47,7 +47,7 @@ python -m twine upload dist/*
 - ✅ Updated `README.md` with installation instructions
 
 **Key Features**:
-- Scoped package (@parthivrawat/)
+- Scoped package (@prthv-rwt/)
 - Public access configured
 - Node 16+ engine requirement
 - Dual module support (require/import)
@@ -171,7 +171,7 @@ git push origin v1.0.0
 
 | Feature | Python | TypeScript | Go |
 |---------|--------|------------|-----|
-| **Package Name** | auth-framework-py | @parthivrawat/auth-framework | github.com/parthivrawat/auth-framework |
+| **Package Name** | auth-framework-py | @prthv-rwt/auth-framework | github.com/parthivrawat/auth-framework |
 | **Version** | 1.0.0 | 1.0.0 | v1.0.0 (git tag) |
 | **License** | MIT | MIT | MIT |
 | **Min Version** | Python 3.8+ | Node 16+ | Go 1.21+ |
@@ -208,7 +208,7 @@ git push origin v1.0.0
 ### Production Links (After Publishing)
 
 - **PyPI**: https://pypi.org/project/auth-framework-py/
-- **NPM**: https://www.npmjs.com/package/@parthivrawat/auth-framework
+- **NPM**: https://www.npmjs.com/package/@prthv-rwt/auth-framework
 - **pkg.go.dev**: https://pkg.go.dev/github.com/parthivrawat/auth-framework
 
 ### Installation Commands
@@ -218,7 +218,7 @@ git push origin v1.0.0
 pip install auth-framework-py
 
 # TypeScript/JavaScript
-npm install @parthivrawat/auth-framework
+npm install @prthv-rwt/auth-framework
 
 # Go
 go get github.com/parthivrawat/auth-framework@latest

@@ -149,11 +149,11 @@ pip install -e ".[dev]"
 
 **Production:**
 ```bash
-npm install @parthivrawat/auth-framework
+npm install @prthv-rwt/auth-framework
 # or
-yarn add @parthivrawat/auth-framework
+yarn add @prthv-rwt/auth-framework
 # or
-pnpm add @parthivrawat/auth-framework
+pnpm add @prthv-rwt/auth-framework
 ```
 
 **Development:**
@@ -164,7 +164,7 @@ npm install
 npm run build
 ```
 
-📦 [View on NPM](https://www.npmjs.com/package/@parthivrawat/auth-framework)
+📦 [View on NPM](https://www.npmjs.com/package/@prthv-rwt/auth-framework)
 
 ### Go (pkg.go.dev)
 
