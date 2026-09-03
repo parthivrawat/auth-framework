@@ -83,8 +83,8 @@ npm publish --access public
 
 **Publishing Command**:
 ```bash
-git tag go/v1.0.2
-git push origin go/v1.0.2
+git tag go/v1.0.3
+git push origin go/v1.0.3
 # pkg.go.dev indexes automatically
 ```
 
@@ -197,7 +197,7 @@ cargo publish
 | Feature | Python | TypeScript | Go | Rust |
 |---------|--------|------------|-----|------|
 | **Package Name** | auth-framework-py | @prthv-rwt/auth-framework | github.com/parthivrawat/auth-framework/go | auth-framework-rs |
-| **Version** | 1.0.0 | 1.0.0 | v1.0.0 (git tag) | 1.0.0 |
+| **Version** | 1.0.3 | 1.0.3 | go/v1.0.3 (git tag) | 1.0.3 |
 | **License** | MIT | MIT | MIT | MIT |
 | **Min Version** | Python 3.8+ | Node 16+ | Go 1.21+ | Rust 1.70+ |
 | **Dependencies** | 0 runtime | 0 runtime | 1 (golang.org/x/crypto) | 4 (ring, base64, serde_json, subtle) |
@@ -217,6 +217,9 @@ cargo publish
 - Timing-safe comparisons
 - Cryptographically secure random generation
 - Token revocation mechanisms
+- Optional JWT claims (`iss`, `aud`, `jti`, `kid`) and allowed-algorithm whitelist
+- Pluggable `StorageBackend` abstraction for sessions, tokens, and revocation lists
+- Refresh-token rotation with family binding and reuse detection
 
 ### Quality Metrics
 
@@ -282,14 +285,16 @@ cargo add auth-framework-rs
 1. **Update versions** in all package files
 2. **Update CHANGELOGs** with release notes
 3. **Run validation**: `./validate-packages.sh` or `.\validate-packages.ps1`
-4. **Commit changes**: `git commit -am "Release v1.0.2"`
-5. **Create tag**: `git tag v1.0.2`
-6. **Push tag**: `git push origin v1.0.2`
-7. **GitHub Actions** automatically:
+4. **Commit changes**: `git commit -am "Release v1.0.3"`
+5. **Create release tag**: `git tag v1.0.3`
+6. **Create Go submodule tag**: `git tag go/v1.0.3`
+7. **Push tags**: `git push origin v1.0.3 go/v1.0.3`
+8. **GitHub Actions** automatically:
    - Runs all tests
    - Validates versions
    - Publishes to PyPI
    - Publishes to NPM
+   - Publishes to crates.io
    - Indexes on pkg.go.dev
    - Creates GitHub release
 
@@ -357,6 +362,6 @@ For publishing issues or questions:
 
 ---
 
-**Last Updated**: 2024-08-26  
-**Status**: ✅ Ready for Publication  
-**Next Action**: Run validation script and publish to registries
+- **Last Updated**: 2026-09-03
+- **Status**: ✅ Ready for Publication
+- **Next Action**: Run validation script and publish to registries

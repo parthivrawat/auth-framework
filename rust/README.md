@@ -47,7 +47,7 @@ use std::collections::HashMap;
 use auth_framework_rs::{Auth, LocalAuthProvider, TokenType};
 
 fn main() {
-    let auth = Auth::new("secret_key", TokenType::JWT);
+    let auth = Auth::new("secret_key", TokenType::JWT, None).unwrap();
     let provider = LocalAuthProvider::new();
     auth.add_provider("local", Box::new(provider));
 

@@ -66,8 +66,8 @@ npm run build
 ```typescript
 import { Auth, LocalAuthProvider } from 'auth-framework';
 
-// Initialize auth framework
-const auth = new Auth();
+// Initialize auth framework (a strong secret is required)
+const auth = new Auth('your-256-bit-secret');
 
 // Add local authentication provider
 const provider = new LocalAuthProvider();

@@ -54,12 +54,16 @@ cd ../rust && cargo test
 ```bash
 # Commit changes
 git add .
-git commit -m "Release v1.0.1"
+git commit -m "Release v1.0.3"
 
-# Create and push tag
-git tag v1.0.1
+# Create and push the main release tag
+git tag v1.0.3
 git push origin main
-git push origin v1.0.1
+git push origin v1.0.3
+
+# Create and push the Go submodule tag
+git tag go/v1.0.3
+git push origin go/v1.0.3
 ```
 
 ### 4. Automated Publishing
@@ -69,6 +73,7 @@ GitHub Actions will automatically:
 - ✅ Validate versions
 - ✅ Publish to PyPI
 - ✅ Publish to NPM
+- ✅ Publish to crates.io
 - ✅ Index on pkg.go.dev
 - ✅ Create GitHub release
 
@@ -76,13 +81,16 @@ GitHub Actions will automatically:
 
 ```bash
 # Check PyPI
-pip install auth-framework-py==1.0.1
+pip install auth-framework-py==1.0.3
 
 # Check NPM
-npm info @prthv-rwt/auth-framework@1.0.1
+npm info @prthv-rwt/auth-framework@1.0.3
 
 # Check pkg.go.dev
-go get github.com/parthivrawat/auth-framework/go@v1.0.2
+go get github.com/parthivrawat/auth-framework/go@v1.0.3
+
+# Check crates.io
+cargo install auth-framework-rs --version 1.0.3
 ```
 
 ---
@@ -198,6 +206,7 @@ Common issues:
 
 - **PyPI**: https://pypistats.org/packages/auth-framework-py
 - **NPM**: https://www.npmjs.com/package/@prthv-rwt/auth-framework
+- **crates.io**: https://crates.io/crates/auth-framework-rs
 - **Go**: https://pkg.go.dev/github.com/parthivrawat/auth-framework/go?tab=importedby
 
 ### Issue Tracking
@@ -281,6 +290,6 @@ cargo update
 
 ---
 
-**Last Updated**: 2024-08-26  
-**Maintainers**: Parthiv Rawat  
-**Contact**: parthiv05022000@gmail.com
+- **Last Updated**: 2026-09-03
+- **Maintainers**: Parthiv Rawat
+- **Contact**: parthiv05022000@gmail.com

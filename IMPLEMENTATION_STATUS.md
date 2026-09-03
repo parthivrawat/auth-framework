@@ -198,25 +198,25 @@ Implementation of the Auth & Authorization Framework from the custom library pro
 
 ## API Consistency
 
-All three implementations follow the same API design:
+All four implementations follow the same API design:
 
 ```python
 # Python
-auth = Auth()
+auth = Auth("your-256-bit-secret")
 auth.add_provider("local", LocalAuthProvider())
 result = auth.login("local", {"username": "alice", "password": "secret"})
 ```
 
 ```typescript
 // TypeScript
-const auth = new Auth();
+const auth = new Auth('your-256-bit-secret');
 auth.addProvider("local", new LocalAuthProvider());
 const result = await auth.login("local", { username: "alice", password: "secret" });
 ```
 
 ```go
 // Go
-auth := NewAuth()
+auth := NewAuth("your-256-bit-secret", TokenTypeJWT)
 auth.AddProvider("local", NewLocalAuthProvider())
 result, err := auth.Login("local", map[string]interface{}{"username": "alice", "password": "secret"})
 ```
@@ -307,6 +307,25 @@ result, err := auth.Login("local", map[string]interface{}{"username": "alice", "
 | Rust       | 1,141    | 374      | 18    | ✅ Complete |
 | **Total**  | **3,430**| **2,058**| **110**| **✅ Complete** |
 
+### P0 & P1 Improvements (Completed)
+
+The following prioritized hardening and consistency items from [IMPROVEMENTS.md](./IMPROVEMENTS.md) are now reflected in the codebase:
+
+| Priority | Item | Status |
+|---|---|---|
+| P0 | Token hardening: `iss`, `aud`, `jti`, `kid` and allowed-algorithm whitelist | ✅ |
+| P0 | Secrets required at construction; no random-per-instance defaults | ✅ |
+| P0 | Deny rules evaluated before allow/role checks | ✅ |
+| P0 | Safe Go JWT type assertions (no panics on malformed tokens) | ✅ |
+| P0 | Generated artifacts removed and `.gitignore` enforced | ✅ |
+| P0 | Go submodule tags use `go/vX.Y.Z` in `publish.yml` | ✅ |
+| P1 | Pluggable `StorageBackend` abstraction (in-memory default) | ✅ |
+| P1 | Multi-wildcard pattern matching (`*`, `?`) | ✅ |
+| P1 | Real refresh-token rotation with family binding and reuse detection | ✅ |
+| P1 | Python `datetime.now(timezone.utc)` and injectable `Clock` for tests | ✅ |
+| P1 | TypeScript dual CJS/ESM build via `tsup` with correct `exports` map | ✅ |
+| P1 | Standardize error handling and public API signatures | 🔄 In progress |
+
 ### Next Steps (Optional Enhancements)
 
 1. **Advanced Examples**
@@ -338,16 +357,16 @@ result, err := auth.Login("local", map[string]interface{}{"username": "alice", "
 - Install: `pip install -e .`
 
 ### TypeScript
-- Location: `./typescript/` (pending)
-- Tests: `npm test` (pending)
-- Example: `npm run example` (pending)
-- Install: `npm install` (pending)
+- Location: `./typescript/`
+- Tests: `npm test`
+- Example: `npm run example` (configured in `typescript/package.json`)
+- Install: `npm install`
 
 ### Go
-- Location: `./go/` (pending)
-- Tests: `go test ./...` (pending)
-- Example: `go run examples/basic/main.go` (pending)
-- Install: `go get` (pending)
+- Location: `./go/`
+- Tests: `go test -v`
+- Example: See `go/README.md` and `go/auth_test.go` for usage patterns
+- Install: `go mod download`
 
 ### Rust
 - Location: `./rust/`
@@ -357,6 +376,6 @@ result, err := auth.Login("local", map[string]interface{}{"username": "alice", "
 
 ---
 
-**Last Updated**: 2026-08-27  
-**Status**: ✅ ALL FOUR LANGUAGES COMPLETE  
-**Achievement**: Full cross-language implementation with 100% test pass rate
+- **Last Updated**: 2026-09-03
+- **Status**: ✅ ALL FOUR LANGUAGES COMPLETE
+- **Achievement**: Full cross-language implementation with 100% test pass rate

@@ -34,7 +34,7 @@ go get github.com/parthivrawat/auth-framework/go@latest
 Or add to your `go.mod`:
 
 ```go
-require github.com/parthivrawat/auth-framework/go v1.0.2
+require github.com/parthivrawat/auth-framework/go v1.0.3
 ```
 
 Then run:

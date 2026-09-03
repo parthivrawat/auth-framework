@@ -23,15 +23,15 @@ A unified identity, session, token, and permission framework with pluggable prov
 - **Pluggable Providers**: Easy to add OAuth2, OIDC, SAML providers
 
 ### 🎫 Token Management
-- **JWT Tokens**: Simple implementation, no external dependencies (Python/TypeScript/Go)
-- **Opaque Tokens**: Server-side storage for maximum security
-- **Refresh Tokens**: Long-lived tokens for seamless re-authentication
-- **Token Revocation**: Server-side revocation list
+- **JWT Tokens**: HMAC-SHA256 with optional `iss`/`aud`/`jti`/`kid` claims and an allowed-algorithm whitelist
+- **Opaque Tokens**: Server-side storage backed by a pluggable `StorageBackend`
+- **Refresh Tokens**: Rotated tokens bound to a family with reuse detection
+- **Token Revocation**: Server-side revocation list backed by the configured `StorageBackend`
 
 ### 🛡️ Authorization
 - **RBAC**: Role-Based Access Control with role-permission mapping
 - **ABAC**: Attribute-Based Access Control with policy rules
-- **Wildcard Matching**: Flexible resource patterns (e.g., `document:*`)
+- **Wildcard Matching**: Glob-style resource patterns supporting `*` and `?` wildcards (e.g., `document:*:read`)
 - **Context-Aware**: Conditional policies based on runtime context
 - **Multi-Tenant**: Built-in tenant isolation
 
@@ -40,6 +40,7 @@ A unified identity, session, token, and permission framework with pluggable prov
 - **IP & User Agent**: Security context for each session
 - **Configurable TTL**: Flexible session expiry
 - **Session Revocation**: Logout and security event handling
+- **Pluggable Storage**: Sessions and revocation state use the same `StorageBackend` abstraction
 - **Cleanup**: Automatic expired session cleanup
 
 ---
@@ -51,8 +52,8 @@ A unified identity, session, token, and permission framework with pluggable prov
 ```python
 from auth_framework import Auth, LocalAuthProvider
 
-# Initialize
-auth = Auth()
+# Initialize (a strong, externalized secret is now required)
+auth = Auth("your-256-bit-secret")
 provider = LocalAuthProvider()
 auth.add_provider("local", provider)
 
@@ -73,8 +74,8 @@ if auth.check_permission(user, "read", "document:123"):
 ```typescript
 import { Auth, LocalAuthProvider } from 'auth-framework';
 
-// Initialize
-const auth = new Auth();
+// Initialize (a strong, externalized secret is now required)
+const auth = new Auth('your-256-bit-secret');
 const provider = new LocalAuthProvider();
 auth.addProvider('local', provider);
 
@@ -134,7 +135,7 @@ use auth_framework_rs::{Auth, LocalAuthProvider, TokenType};
 
 fn main() {
     // Initialize
-    let auth = Auth::new("secret", TokenType::JWT);
+    let auth = Auth::new("secret", TokenType::JWT, None).unwrap();
     let provider = LocalAuthProvider::new();
     auth.add_provider("local", Box::new(provider));
 
@@ -310,7 +311,7 @@ All four implementations follow the same API design:
 
 | Feature | Python | TypeScript | Go | Rust |
 |---------|--------|------------|-----|------|
-| Initialize | `Auth()` | `new Auth()` | `NewAuth()` | `Auth::new()` |
+| Initialize | `Auth(secret)` | `new Auth(secret)` | `NewAuth(secret, tokenType)` | `Auth::new(secret, TokenType)` |
 | Add Provider | `add_provider()` | `addProvider()` | `AddProvider()` | `add_provider()` |
 | Login | `login()` | `login()` | `Login()` | `login()` |
 | Verify Token | `verify_token()` | `verifyToken()` | `VerifyToken()` | `verify_token()` |
@@ -334,6 +335,12 @@ All four implementations follow the same API design:
 - Session cleanup batching
 - Token signature caching
 - Role permission pre-computation
+
+---
+
+## Storage and Scaling
+
+This framework now ships with a **pluggable `StorageBackend` abstraction** in every language implementation. The default is an `InMemoryStorage` backend that keeps sessions, token revocation lists, and opaque tokens in process. To scale horizontally or share state across processes, implement the `StorageBackend` interface and pass your adapter to the `Auth` / `SessionManager` / `TokenGenerator` constructors. Redis, SQL, and other backends can be plugged in without changing business logic.
 
 ---
 
@@ -402,7 +409,7 @@ This implementation is part of the Custom Library Proposals initiative (#41 - Au
 
 ---
 
-**Last Updated**: 2026-08-27  
-**Status**: ✅ Production Ready  
-**Languages**: Python, TypeScript, Go, Rust  
-**Tests**: 92 passing (100% pass rate)
+- **Last Updated**: 2026-09-03
+- **Status**: ✅ Production Ready
+- **Languages**: Python, TypeScript, Go, Rust
+- **Tests**: 110 passing (100% pass rate)

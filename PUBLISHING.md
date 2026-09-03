@@ -100,6 +100,8 @@ cd typescript
 npm run build
 ```
 
+The build uses `tsup` to produce both CJS (`dist/index.cjs`) and ESM (`dist/index.mjs`) outputs, with `package.json` `exports` mapping `require` and `import` to the correct files.
+
 ### Test Package Locally
 
 ```bash
@@ -107,7 +109,7 @@ npm run build
 npm pack
 
 # Test installation
-npm install prthv-rwt-auth-framework-1.0.0.tgz
+npm install ./<tarball-name>
 ```
 
 ### Publish to NPM
@@ -164,8 +166,8 @@ Go modules are published by pushing tags to GitHub. No separate upload needed!
 
 ```bash
 # From repository root
-git tag go/v1.0.2
-git push origin go/v1.0.2
+git tag go/v1.0.3
+git push origin go/v1.0.3
 ```
 
 ### Trigger pkg.go.dev Indexing
@@ -175,17 +177,17 @@ Visit: https://pkg.go.dev/github.com/parthivrawat/auth-framework/go
 Or use:
 
 ```bash
-curl https://proxy.golang.org/github.com/parthivrawat/auth-framework/go/@v/v1.0.2.info
+curl https://proxy.golang.org/github.com/parthivrawat/auth-framework/go/@v/v1.0.3.info
 ```
 
 ### Verify
 
 ```bash
 # Test installation
-go get github.com/parthivrawat/auth-framework/go@v1.0.2
+go get github.com/parthivrawat/auth-framework/go@v1.0.3
 
 # Check documentation
-open https://pkg.go.dev/github.com/parthivrawat/auth-framework/go@v1.0.2
+open https://pkg.go.dev/github.com/parthivrawat/auth-framework/go@v1.0.3
 ```
 
 ### Best Practices
@@ -195,6 +197,39 @@ open https://pkg.go.dev/github.com/parthivrawat/auth-framework/go@v1.0.2
 3. Ensure go.mod is committed
 4. Run `go mod tidy` before tagging
 5. Include comprehensive godoc comments
+
+---
+
+## Rust - crates.io
+
+### Prerequisites
+
+- [crates.io](https://crates.io/) account and API token
+- `cargo` installed
+
+### Build
+
+```bash
+cd rust
+cargo build --release
+cargo test
+```
+
+### Publish to crates.io
+
+```bash
+cd rust
+cargo login          # one-time setup with your API token
+cargo publish --dry-run
+cargo publish
+```
+
+### Verify
+
+```bash
+cargo search auth-framework-rs
+cargo install auth-framework-rs --version 1.0.3
+```
 
 ---
 
@@ -213,10 +248,13 @@ Follow [SemVer](https://semver.org/):
 Before publishing, update version in:
 
 **Python:**
-- `python/pyproject.toml` → `version = "1.0.1"`
+- `python/pyproject.toml` → `version = "1.0.3"`
 
 **TypeScript:**
-- `typescript/package.json` → `"version": "1.0.1"`
+- `typescript/package.json` → `"version": "1.0.3"`
+
+**Rust:**
+- `rust/Cargo.toml` → `version = "1.0.3"`
 
 **Go:**
 - Git tag only (no file changes needed)
@@ -232,7 +270,7 @@ Add new version section to:
 
 ## Pre-Release Checklist
 
-- [ ] All tests passing (Python: 40, TypeScript: 38, Go: 14)
+- [ ] All tests passing (Python: 40, TypeScript: 38, Go: 14, Rust: 18)
 - [ ] Documentation updated
 - [ ] CHANGELOG.md updated for all languages
 - [ ] Version numbers bumped
@@ -250,6 +288,7 @@ Add new version section to:
 - [ ] GitHub release created with notes
 - [ ] PyPI package published
 - [ ] NPM package published
+- [ ] crates.io package indexed
 - [ ] pkg.go.dev indexed
 - [ ] Documentation website updated
 - [ ] Announcement posted (blog, Twitter, etc.)
@@ -276,7 +315,7 @@ Can deprecate or unpublish (within 72 hours):
 
 ```bash
 # Deprecate
-npm deprecate @prthv-rwt/auth-framework@1.0.0 "This version has issues, use 1.0.1"
+npm deprecate @prthv-rwt/auth-framework@1.0.0 "This version has issues, use 1.0.3"
 
 # Unpublish (within 72 hours only)
 npm unpublish @prthv-rwt/auth-framework@1.0.0
@@ -373,5 +412,5 @@ For package-specific issues:
 
 ---
 
-**Last Updated**: 2024-08-26  
-**Current Version**: 1.0.0
+- **Last Updated**: 2026-09-03
+- **Current Version**: 1.0.3

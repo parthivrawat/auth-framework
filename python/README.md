@@ -63,8 +63,8 @@ pip install -e ".[dev]"
 ```python
 from auth_framework import Auth, LocalAuthProvider
 
-# Initialize auth framework
-auth = Auth()
+# Initialize auth framework (a strong secret is required)
+auth = Auth("your-256-bit-secret")
 
 # Add local authentication provider
 provider = LocalAuthProvider()
@@ -204,7 +204,7 @@ if new_tokens:
 from auth_framework import TokenType
 
 # Use opaque tokens instead of JWT
-auth = Auth(token_type=TokenType.OPAQUE)
+auth = Auth("your-256-bit-secret", token_type=TokenType.OPAQUE)
 
 # Rest of the code remains the same
 # Opaque tokens are stored server-side and can be easily revoked
@@ -329,7 +329,7 @@ pytest test_auth_framework.py -v --cov=auth_framework --cov-report=term-missing
 ## Security Considerations
 
 1. **Password Storage**: Passwords are hashed using PBKDF2 with 100,000 iterations and a random salt
-2. **Token Secrets**: Use a strong, random secret for JWT signing
+2. **Token Secrets**: Provide a strong, externalized secret when constructing `Auth`
 3. **Token Expiry**: Set appropriate TTLs for access and refresh tokens
 4. **Session Security**: Track device IDs and IP addresses for session validation
 5. **HTTPS**: Always use HTTPS in production to protect tokens in transit
