@@ -31,6 +31,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cryptographically secure random token generation
 - Server-side token revocation list
 
+## [1.0.3] - 2026-09-03
+
+### Added
+- Pluggable `StorageBackend` abstraction for sessions, token revocation lists, and opaque tokens
+- Real refresh-token rotation with family binding and reuse detection
+- Optional JWT claims (`iss`, `aud`, `jti`, `kid`) and allowed-algorithm whitelist
+- Multi-wildcard (`*`, `?`) pattern matching for policy resources
+
+### Changed
+- `Auth::new` now requires an explicit signing secret
+
+### Fixed
+- Policy engine now evaluates explicit `deny` rules before any `allow` checks
+
 ## [Unreleased]
 
 ### Planned
@@ -41,4 +55,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Axum middleware integration
 - Rate limiting for authentication endpoints
 
+[1.0.3]: https://github.com/parthivrawat/auth-framework/releases/tag/v1.0.3
 [1.0.1]: https://github.com/parthivrawat/auth-framework/releases/tag/v1.0.1

@@ -1,6 +1,6 @@
 {
   "name": "@prthv-rwt/auth-framework",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "description": "A unified identity, session, token, and permission framework with pluggable providers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -8,11 +8,11 @@
     ".": {
       "types": "./dist/index.d.ts",
       "require": "./dist/index.js",
-      "import": "./dist/index.js"
+      "import": "./dist/index.mjs"
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean --out-dir dist",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -52,7 +52,8 @@
     "@vitest/coverage-v8": "^1.6.1",
     "tsx": "^4.23.12",
     "typescript": "^5.9.3",
-    "vitest": "^1.6.1"
+    "vitest": "^1.6.1",
+    "tsup": "^8.0.0"
   },
   "files": [
     "dist",
