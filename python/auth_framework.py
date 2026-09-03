@@ -15,15 +15,16 @@ Features:
 
 import hashlib
 import hmac
+import os
 import secrets
-import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set, Union
 import json
 import base64
+import fnmatch
 
 
 # ============================================================================
@@ -44,6 +45,49 @@ class AuthMethod(Enum):
     OIDC = "oidc"
     SAML = "saml"
     API_KEY = "api_key"
+
+
+class AuthError(Exception):
+    """Exception raised for authentication configuration or runtime errors."""
+    pass
+
+
+# ============================================================================
+# Clock Abstraction
+# ============================================================================
+
+class Clock(ABC):
+    """Abstract clock for time-based operations."""
+
+    @abstractmethod
+    def now(self) -> datetime:
+        """Return the current time as a timezone-aware UTC datetime."""
+        pass
+
+
+class RealClock(Clock):
+    """Clock that returns the real current UTC time."""
+
+    def now(self) -> datetime:
+        return datetime.now(timezone.utc)
+
+
+class FixedClock(Clock):
+    """Clock with a controllable, fixed time for testing."""
+
+    def __init__(self, initial: Optional[datetime] = None):
+        self._dt = initial if initial is not None else datetime.now(timezone.utc)
+
+    def now(self) -> datetime:
+        return self._dt
+
+    def advance(self, seconds: int):
+        """Move the clock forward by the given number of seconds."""
+        self._dt += timedelta(seconds=seconds)
+
+    def set(self, dt: datetime):
+        """Set the clock to the given datetime."""
+        self._dt = dt
 
 
 @dataclass
@@ -81,16 +125,27 @@ class Token:
     type: TokenType
     user_id: str
     expires_at: datetime
-    issued_at: datetime = field(default_factory=datetime.utcnow)
+    issued_at: Optional[datetime] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
-    
+    clock: Optional[Clock] = None
+
+    def __post_init__(self):
+        if self.clock is None:
+            self.clock = RealClock()
+        if self.issued_at is None:
+            self.issued_at = self.clock.now()
+        if self.issued_at.tzinfo is None:
+            self.issued_at = self.issued_at.replace(tzinfo=timezone.utc)
+        if self.expires_at.tzinfo is None:
+            self.expires_at = self.expires_at.replace(tzinfo=timezone.utc)
+
     def is_expired(self) -> bool:
         """Check if token is expired."""
-        return datetime.utcnow() > self.expires_at
-    
+        return self.clock.now() > self.expires_at
+
     def time_until_expiry(self) -> timedelta:
         """Get time remaining until expiry."""
-        return self.expires_at - datetime.utcnow()
+        return self.expires_at - self.clock.now()
 
 
 @dataclass
@@ -101,20 +156,36 @@ class Session:
     device_id: Optional[str] = None
     ip_address: Optional[str] = None
     user_agent: Optional[str] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    last_activity: datetime = field(default_factory=datetime.utcnow)
+    created_at: Optional[datetime] = None
+    last_activity: Optional[datetime] = None
     expires_at: Optional[datetime] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
-    
+    clock: Optional[Clock] = None
+
+    def __post_init__(self):
+        if self.clock is None:
+            self.clock = RealClock()
+        now = self.clock.now()
+        if self.created_at is None:
+            self.created_at = now
+        if self.last_activity is None:
+            self.last_activity = now
+        if self.created_at.tzinfo is None:
+            self.created_at = self.created_at.replace(tzinfo=timezone.utc)
+        if self.last_activity.tzinfo is None:
+            self.last_activity = self.last_activity.replace(tzinfo=timezone.utc)
+        if self.expires_at is not None and self.expires_at.tzinfo is None:
+            self.expires_at = self.expires_at.replace(tzinfo=timezone.utc)
+
     def is_expired(self) -> bool:
         """Check if session is expired."""
         if self.expires_at is None:
             return False
-        return datetime.utcnow() > self.expires_at
-    
+        return self.clock.now() > self.expires_at
+
     def touch(self):
         """Update last activity timestamp."""
-        self.last_activity = datetime.utcnow()
+        self.last_activity = self.clock.now()
 
 
 @dataclass
@@ -154,16 +225,126 @@ class PolicyRule:
     
     @staticmethod
     def _wildcard_match(pattern: str, value: str) -> bool:
-        """Simple wildcard matching."""
-        if "*" not in pattern:
-            return pattern == value
-        
-        parts = pattern.split("*")
-        if len(parts) == 2:
-            prefix, suffix = parts
-            return value.startswith(prefix) and value.endswith(suffix)
-        
+        """Glob-style wildcard matching. Supports * and ?."""
+        return fnmatch.fnmatchcase(value, pattern)
+
+
+# ============================================================================
+# Storage Backend
+# ============================================================================
+
+class StorageBackend(ABC):
+    """Abstract base class for pluggable storage backends."""
+    
+    @abstractmethod
+    def get(self, key: str) -> Optional[Any]:
+        """Get a value by key. Returns None if not found or expired."""
+        pass
+    
+    @abstractmethod
+    def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
+        """Store a value. Optional ttl is in seconds."""
+        pass
+    
+    @abstractmethod
+    def delete(self, key: str) -> bool:
+        """Delete a key."""
+        pass
+    
+    @abstractmethod
+    def has(self, key: str) -> bool:
+        """Check if a key exists and is not expired."""
+        pass
+    
+    @abstractmethod
+    def keys(self, prefix: Optional[str] = None) -> List[str]:
+        """List keys, optionally filtered by prefix."""
+        pass
+    
+    @abstractmethod
+    def clear(self) -> None:
+        """Clear all stored data."""
+        pass
+
+
+class InMemoryStorage(StorageBackend):
+    """In-memory storage backend (default)."""
+    
+    def __init__(self, clock: Optional[Clock] = None):
+        self._data: Dict[str, Any] = {}
+        self.clock = clock or RealClock()
+    
+    def _expired(self, key: str) -> bool:
+        if key not in self._data:
+            return False
+        entry = self._data[key]
+        if isinstance(entry, tuple) and len(entry) == 2 and entry[1] is not None:
+            return self.clock.now().timestamp() > entry[1]
         return False
+    
+    def get(self, key: str) -> Optional[Any]:
+        if key not in self._data:
+            return None
+        if self._expired(key):
+            self.delete(key)
+            return None
+        value, _ = self._data[key]
+        return value
+    
+    def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
+        expires_at = None
+        if ttl is not None and ttl > 0:
+            expires_at = self.clock.now().timestamp() + ttl
+        self._data[key] = (value, expires_at)
+        return True
+    
+    def delete(self, key: str) -> bool:
+        if key in self._data:
+            del self._data[key]
+            return True
+        return False
+    
+    def has(self, key: str) -> bool:
+        if key not in self._data:
+            return False
+        if self._expired(key):
+            self.delete(key)
+            return False
+        return True
+    
+    def keys(self, prefix: Optional[str] = None) -> List[str]:
+        result: List[str] = []
+        for key in list(self._data.keys()):
+            if self._expired(key):
+                self.delete(key)
+                continue
+            if prefix is None or key.startswith(prefix):
+                result.append(key)
+        return result
+    
+    def clear(self) -> None:
+        self._data.clear()
+
+
+def _revoke_refresh_family(storage: StorageBackend, family_id: str,
+                            extra_tokens: Optional[List[str]] = None) -> None:
+    """Revoke every refresh token in a family.
+
+    Deletes the active family record and any associated metadata, then marks
+    all known token values in the family as revoked so they cannot be used
+    again.
+    """
+    extra_tokens = extra_tokens or []
+    tokens_to_revoke = set(extra_tokens)
+    for key in list(storage.keys(prefix="refresh_meta:")):
+        meta = storage.get(key)
+        if isinstance(meta, dict) and meta.get('fid') == family_id:
+            token_value = key.split(":", 1)[1]
+            tokens_to_revoke.add(token_value)
+            storage.delete(key)
+    storage.delete(f"refresh_family:{family_id}")
+    for token_value in tokens_to_revoke:
+        storage.set(f"revoked:{token_value}", True)
 
 
 # ============================================================================
@@ -229,47 +410,103 @@ class TokenGenerator(ABC):
     def verify(self, token_value: str) -> Optional[Token]:
         """Verify and decode a token."""
         pass
+    
+    @abstractmethod
+    def revoke(self, token_value: str):
+        """Revoke a token."""
+        pass
+    
+    @abstractmethod
+    def is_revoked(self, token_value: str) -> bool:
+        """Check if a token has been revoked."""
+        pass
 
 
 class SimpleJWTGenerator(TokenGenerator):
     """Simple JWT-like token generator (no external dependencies)."""
     
-    def __init__(self, secret: str):
+    def __init__(
+        self,
+        secret: str,
+        storage: Optional[StorageBackend] = None,
+        issuer: Optional[str] = None,
+        audience: Optional[str] = None,
+        key_id: Optional[str] = None,
+        allowed_algorithms: Optional[List[str]] = None,
+        expected_issuer: Optional[str] = None,
+        expected_audience: Optional[str] = None,
+        clock: Optional[Clock] = None,
+    ):
         self.secret = secret.encode()
+        self.storage = storage or InMemoryStorage(clock=clock)
+        self.issuer = issuer
+        self.audience = audience
+        self.key_id = key_id
+        self.allowed_algorithms = allowed_algorithms or ["HS256"]
+        self.expected_issuer = expected_issuer
+        self.expected_audience = expected_audience
+        self.clock = clock or RealClock()
     
-    def generate(self, user: User, expires_in: int = 3600) -> Token:
+    def generate(self, user: User, expires_in: int = 3600,
+                 extra_claims: Optional[Dict[str, Any]] = None,
+                 token_type: Optional[TokenType] = None) -> Token:
         """Generate a JWT-like token."""
-        issued_at = datetime.utcnow()
+        if token_type is None:
+            token_type = TokenType.JWT
+
+        issued_at = self.clock.now()
         expires_at = issued_at + timedelta(seconds=expires_in)
-        
-        payload = {
+
+        payload: Dict[str, Any] = {
             "user_id": user.id,
             "username": user.username,
             "roles": list(user.roles),
             "permissions": list(user.permissions),
             "tenant_id": user.tenant_id,
+            "jti": secrets.token_urlsafe(16),
             "iat": int(issued_at.timestamp()),
             "exp": int(expires_at.timestamp()),
+            "ttyp": token_type.value,
         }
-        
+        if self.issuer is not None:
+            payload["iss"] = self.issuer
+        if self.audience is not None:
+            payload["aud"] = self.audience
+        if extra_claims:
+            payload.update(extra_claims)
+
         # Create simple JWT: base64(header).base64(payload).signature
-        header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).decode().rstrip('=')
+        header_obj = {"alg": "HS256", "typ": "JWT"}
+        if self.key_id is not None:
+            header_obj["kid"] = self.key_id
+        header = base64.urlsafe_b64encode(json.dumps(header_obj).encode()).decode().rstrip('=')
         payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
-        
+
         message = f"{header}.{payload_b64}"
         signature = base64.urlsafe_b64encode(
             hmac.new(self.secret, message.encode(), hashlib.sha256).digest()
         ).decode().rstrip('=')
-        
+
         token_value = f"{message}.{signature}"
-        
+
+        metadata = {
+            "username": user.username,
+            "roles": list(user.roles),
+            "permissions": list(user.permissions),
+            "tenant_id": user.tenant_id,
+            "jti": payload["jti"],
+        }
+        if extra_claims:
+            metadata.update(extra_claims)
+
         return Token(
             value=token_value,
-            type=TokenType.JWT,
+            type=token_type,
             user_id=user.id,
             issued_at=issued_at,
             expires_at=expires_at,
-            metadata={"roles": list(user.roles), "permissions": list(user.permissions)}
+            metadata=metadata,
+            clock=self.clock,
         )
     
     def verify(self, token_value: str) -> Optional[Token]:
@@ -278,88 +515,162 @@ class SimpleJWTGenerator(TokenGenerator):
             parts = token_value.split('.')
             if len(parts) != 3:
                 return None
-            
+
             header_b64, payload_b64, signature_b64 = parts
-            
+
+            # Decode and validate header
+            header_padding = '=' * (-len(header_b64) % 4)
+            header_json = base64.urlsafe_b64decode(header_b64 + header_padding).decode()
+            header = json.loads(header_json)
+            if header.get("alg") not in self.allowed_algorithms:
+                return None
+            if self.key_id is not None and header.get("kid") != self.key_id:
+                return None
+
             # Verify signature
             message = f"{header_b64}.{payload_b64}"
             expected_signature = base64.urlsafe_b64encode(
                 hmac.new(self.secret, message.encode(), hashlib.sha256).digest()
             ).decode().rstrip('=')
-            
+
             if not hmac.compare_digest(signature_b64, expected_signature):
                 return None
-            
+
             # Decode payload
-            payload_json = base64.urlsafe_b64decode(payload_b64 + '==').decode()
+            payload_padding = '=' * (-len(payload_b64) % 4)
+            payload_json = base64.urlsafe_b64decode(payload_b64 + payload_padding).decode()
             payload = json.loads(payload_json)
-            
-            issued_at = datetime.fromtimestamp(payload['iat'])
-            expires_at = datetime.fromtimestamp(payload['exp'])
-            
+
+            # Validate claims
+            if self.expected_issuer is not None and payload.get("iss") != self.expected_issuer:
+                return None
+            if self.expected_audience is not None and payload.get("aud") != self.expected_audience:
+                return None
+            if not payload.get("jti"):
+                return None
+
+            token_type = TokenType.JWT
+            ttyp = payload.get("ttyp")
+            if ttyp:
+                try:
+                    token_type = TokenType(ttyp)
+                except ValueError:
+                    token_type = TokenType.JWT
+
+            issued_at = datetime.fromtimestamp(payload['iat'], tz=timezone.utc)
+            expires_at = datetime.fromtimestamp(payload['exp'], tz=timezone.utc)
+
             token = Token(
                 value=token_value,
-                type=TokenType.JWT,
+                type=token_type,
                 user_id=payload['user_id'],
                 issued_at=issued_at,
                 expires_at=expires_at,
                 metadata={
                     "username": payload.get('username'),
+                    "jti": payload.get('jti'),
                     "roles": payload.get('roles', []),
                     "permissions": payload.get('permissions', []),
                     "tenant_id": payload.get('tenant_id'),
-                }
+                },
+                clock=self.clock,
             )
-            
+            if 'fid' in payload:
+                token.metadata['fid'] = payload['fid']
+
             # Check expiry
             if token.is_expired():
                 return None
-            
+
+            if self.is_revoked(token_value):
+                return None
+
             return token
-            
+
         except Exception:
             return None
+    
+    def revoke(self, token_value: str):
+        """Revoke a token."""
+        token = self.verify(token_value)
+        if token is not None and token.type == TokenType.REFRESH:
+            family_id = token.metadata.get('fid')
+            if family_id:
+                _revoke_refresh_family(self.storage, family_id, extra_tokens=[token_value])
+                return
+        self.storage.set(f"revoked:{token_value}", True)
+    
+    def is_revoked(self, token_value: str) -> bool:
+        """Check if a token has been revoked."""
+        return self.storage.has(f"revoked:{token_value}")
 
 
 class OpaqueTokenGenerator(TokenGenerator):
     """Opaque token generator with server-side storage."""
     
-    def __init__(self):
-        self.tokens: Dict[str, Token] = {}
+    def __init__(self, storage: Optional[StorageBackend] = None, clock: Optional[Clock] = None):
+        self.storage = storage or InMemoryStorage(clock=clock)
+        self.clock = clock or RealClock()
     
-    def generate(self, user: User, expires_in: int = 3600) -> Token:
+    def _token_key(self, token_value: str) -> str:
+        return f"token:{token_value}"
+    
+    def _revoked_key(self, token_value: str) -> str:
+        return f"revoked:{token_value}"
+    
+    def generate(self, user: User, expires_in: int = 3600,
+                 extra_claims: Optional[Dict[str, Any]] = None,
+                 token_type: Optional[TokenType] = None) -> Token:
         """Generate an opaque token."""
         token_value = secrets.token_urlsafe(32)
-        issued_at = datetime.utcnow()
+        issued_at = self.clock.now()
         expires_at = issued_at + timedelta(seconds=expires_in)
-        
+
+        token_type = token_type or TokenType.OPAQUE
+        metadata = {
+            "username": user.username,
+            "roles": list(user.roles),
+            "permissions": list(user.permissions),
+            "tenant_id": user.tenant_id,
+        }
+        if extra_claims:
+            metadata.update(extra_claims)
+
         token = Token(
             value=token_value,
-            type=TokenType.OPAQUE,
+            type=token_type,
             user_id=user.id,
             issued_at=issued_at,
             expires_at=expires_at,
-            metadata={
-                "username": user.username,
-                "roles": list(user.roles),
-                "permissions": list(user.permissions),
-                "tenant_id": user.tenant_id,
-            }
+            metadata=metadata,
+            clock=self.clock,
         )
-        
-        self.tokens[token_value] = token
+
+        self.storage.set(self._token_key(token_value), token, ttl=expires_in)
         return token
     
     def verify(self, token_value: str) -> Optional[Token]:
         """Verify an opaque token."""
-        token = self.tokens.get(token_value)
+        if self.is_revoked(token_value):
+            return None
+        token = self.storage.get(self._token_key(token_value))
         if token is None or token.is_expired():
             return None
         return token
     
     def revoke(self, token_value: str):
         """Revoke a token."""
-        self.tokens.pop(token_value, None)
+        token = self.storage.get(self._token_key(token_value))
+        if token is not None and token.type == TokenType.REFRESH:
+            family_id = token.metadata.get('fid')
+            if family_id:
+                _revoke_refresh_family(self.storage, family_id, extra_tokens=[token_value])
+        self.storage.delete(self._token_key(token_value))
+        self.storage.set(self._revoked_key(token_value), True)
+    
+    def is_revoked(self, token_value: str) -> bool:
+        """Check if a token has been revoked."""
+        return self.storage.has(self._revoked_key(token_value))
 
 
 # ============================================================================
@@ -388,23 +699,26 @@ class LocalAuthProvider(AuthProvider):
         """Register a new user."""
         user_id = secrets.token_urlsafe(16)
         hashed_password = self.password_hasher.hash(password)
-        
+
+        role_set = set(roles) if roles is not None else set()
+        permission_set = set(permissions) if permissions is not None else set()
+
         self.users[username] = {
             "id": user_id,
             "username": username,
             "email": email,
             "password": hashed_password,
-            "roles": roles or set(),
-            "permissions": permissions or set(),
+            "roles": role_set,
+            "permissions": permission_set,
             "tenant_id": tenant_id,
         }
-        
+
         return User(
             id=user_id,
             username=username,
             email=email,
-            roles=roles or set(),
-            permissions=permissions or set(),
+            roles=role_set,
+            permissions=permission_set,
             tenant_id=tenant_id,
         )
     
@@ -480,32 +794,46 @@ class PolicyEngine:
         self.role_permissions[role].add(permission)
     
     def check(self, user: User, action: str, resource: str, context: Optional[Dict[str, Any]] = None) -> bool:
-        """Check if user is allowed to perform action on resource."""
-        # Check direct permissions
+        """Check if user is allowed to perform action on resource.
+
+        Deny rules are evaluated first and override direct permissions or role
+        permissions. After that, direct permissions, role permissions, and allow
+        rules grant access.
+        """
+        # First pass: explicit deny rules override everything
+        for rule in self.rules:
+            if rule.matches(f"user:{user.username}", action, resource, context):
+                if rule.effect == "deny":
+                    return False
+                continue
+            if any(rule.matches(f"role:{role}", action, resource, context) for role in user.roles):
+                if rule.effect == "deny":
+                    return False
+                continue
+            if rule.matches("*", action, resource, context):
+                if rule.effect == "deny":
+                    return False
+                continue
+
+        # Direct permissions
         if user.has_permission(f"{action}:{resource}"):
             return True
-        
-        # Check role-based permissions
+
+        # Role-based permissions
         for role in user.roles:
             role_perms = self.role_permissions.get(role, set())
             if f"{action}:{resource}" in role_perms or f"{action}:*" in role_perms:
                 return True
-        
-        # Check policy rules
+
+        # Second pass: allow rules
         for rule in self.rules:
-            # Check user-specific rules
             if rule.matches(f"user:{user.username}", action, resource, context):
                 return rule.effect == "allow"
-            
-            # Check role-based rules
-            for role in user.roles:
-                if rule.matches(f"role:{role}", action, resource, context):
-                    return rule.effect == "allow"
-            
-            # Check wildcard rules
+            if any(rule.matches(f"role:{role}", action, resource, context) for role in user.roles):
+                return rule.effect == "allow"
             if rule.matches("*", action, resource, context):
                 return rule.effect == "allow"
-        
+
         return False
 
 
@@ -516,9 +844,16 @@ class PolicyEngine:
 class SessionManager:
     """Manages user sessions."""
     
-    def __init__(self, default_ttl: int = 3600):
-        self.sessions: Dict[str, Session] = {}
+    def __init__(self, default_ttl: int = 3600, storage: Optional[StorageBackend] = None, clock: Optional[Clock] = None):
+        self.storage = storage or InMemoryStorage(clock=clock)
         self.default_ttl = default_ttl
+        self.clock = clock or RealClock()
+    
+    def _session_key(self, session_id: str) -> str:
+        return f"session:{session_id}"
+    
+    def _user_sessions_key(self, user_id: str) -> str:
+        return f"user_sessions:{user_id}"
     
     def create_session(self, user_id: str, device_id: Optional[str] = None,
                       ip_address: Optional[str] = None, user_agent: Optional[str] = None,
@@ -528,11 +863,12 @@ class SessionManager:
         if ttl is None:
             ttl = self.default_ttl
         
+        now = self.clock.now()
         # If ttl is negative or zero, create an expired session
         if ttl <= 0:
-            expires_at = datetime.utcnow() - timedelta(seconds=1)
+            expires_at = now - timedelta(seconds=1)
         else:
-            expires_at = datetime.utcnow() + timedelta(seconds=ttl)
+            expires_at = now + timedelta(seconds=ttl)
         
         session = Session(
             id=session_id,
@@ -541,34 +877,53 @@ class SessionManager:
             ip_address=ip_address,
             user_agent=user_agent,
             expires_at=expires_at,
+            clock=self.clock,
         )
         
-        self.sessions[session_id] = session
+        self.storage.set(self._session_key(session_id), session, ttl=ttl)
+        
+        # Update user session index
+        index = self.storage.get(self._user_sessions_key(user_id)) or set()
+        index.add(session_id)
+        self.storage.set(self._user_sessions_key(user_id), index)
+        
         return session
     
     def get_session(self, session_id: str) -> Optional[Session]:
         """Get a session by ID."""
-        session = self.sessions.get(session_id)
-        if session and not session.is_expired():
-            session.touch()
-            return session
-        return None
+        session = self.storage.get(self._session_key(session_id))
+        if session is None or session.is_expired():
+            return None
+        session.touch()
+        self.storage.set(self._session_key(session_id), session)
+        return session
     
     def revoke_session(self, session_id: str):
         """Revoke a session."""
-        self.sessions.pop(session_id, None)
+        session = self.storage.get(self._session_key(session_id))
+        if session is not None:
+            self.storage.delete(self._session_key(session_id))
+            index = self.storage.get(self._user_sessions_key(session.user_id)) or set()
+            index.discard(session_id)
+            self.storage.set(self._user_sessions_key(session.user_id), index)
     
     def revoke_user_sessions(self, user_id: str):
         """Revoke all sessions for a user."""
-        to_remove = [sid for sid, session in self.sessions.items() if session.user_id == user_id]
-        for sid in to_remove:
-            self.sessions.pop(sid)
+        index = self.storage.get(self._user_sessions_key(user_id)) or set()
+        for session_id in list(index):
+            self.storage.delete(self._session_key(session_id))
+        self.storage.delete(self._user_sessions_key(user_id))
     
     def cleanup_expired(self):
         """Remove expired sessions."""
-        to_remove = [sid for sid, session in self.sessions.items() if session.is_expired()]
-        for sid in to_remove:
-            self.sessions.pop(sid)
+        for key in list(self.storage.keys(prefix="session:")):
+            session = self.storage.get(key)
+            if session is not None and session.is_expired():
+                self.storage.delete(key)
+                index = self.storage.get(self._user_sessions_key(session.user_id)) or set()
+                if session.id in index:
+                    index.discard(session.id)
+                    self.storage.set(self._user_sessions_key(session.user_id), index)
 
 
 # ============================================================================
@@ -578,27 +933,56 @@ class SessionManager:
 class Auth:
     """Main authentication and authorization framework."""
     
-    def __init__(self, secret: Optional[str] = None, token_type: TokenType = TokenType.JWT):
-        self.secret = secret or secrets.token_urlsafe(32)
+    def __init__(
+        self,
+        secret: str,
+        token_type: TokenType = TokenType.JWT,
+        issuer: Optional[str] = None,
+        audience: Optional[str] = None,
+        key_id: Optional[str] = None,
+        allowed_algorithms: Optional[List[str]] = None,
+        storage: Optional[StorageBackend] = None,
+        clock: Optional[Clock] = None,
+    ):
+        if not secret:
+            raise AuthError(
+                "A secret must be provided. Do not use an empty or auto-generated secret in production."
+            )
+        self.secret = secret
         self.token_type = token_type
+        self.issuer = issuer
+        self.audience = audience
+        self.key_id = key_id
+        self.allowed_algorithms = allowed_algorithms
+        self.clock = clock or RealClock()
+        
+        # Shared storage backend (defaults to in-memory)
+        self.storage = storage or InMemoryStorage(clock=self.clock)
         
         # Initialize components
         self.providers: Dict[str, AuthProvider] = {}
         self.token_generator: TokenGenerator = self._create_token_generator(token_type)
         self.policy_engine = PolicyEngine()
-        self.session_manager = SessionManager()
-        
-        # Token revocation list
-        self.revoked_tokens: Set[str] = set()
+        self.session_manager = SessionManager(storage=self.storage, clock=self.clock)
     
     def _create_token_generator(self, token_type: TokenType) -> TokenGenerator:
         """Create appropriate token generator."""
         if token_type == TokenType.JWT:
-            return SimpleJWTGenerator(self.secret)
+            return SimpleJWTGenerator(
+                self.secret,
+                storage=self.storage,
+                issuer=self.issuer,
+                audience=self.audience,
+                key_id=self.key_id,
+                allowed_algorithms=self.allowed_algorithms,
+                expected_issuer=self.issuer,
+                expected_audience=self.audience,
+                clock=self.clock,
+            )
         elif token_type == TokenType.OPAQUE:
-            return OpaqueTokenGenerator()
+            return OpaqueTokenGenerator(storage=self.storage, clock=self.clock)
         else:
-            raise ValueError(f"Unsupported token type: {token_type}")
+            raise AuthError(f"Unsupported token type: {token_type}")
     
     def add_provider(self, name: str, provider: AuthProvider):
         """Add an authentication provider."""
@@ -608,31 +992,47 @@ class Auth:
         """Authenticate a user using the specified provider."""
         provider = self.providers.get(provider_name)
         if not provider:
-            raise ValueError(f"Unknown provider: {provider_name}")
+            raise AuthError(f"Unknown provider: {provider_name}")
         
         return provider.authenticate(credentials)
     
     def login(self, provider_name: str, credentials: Dict[str, Any],
-             create_session: bool = True, token_ttl: int = 3600) -> Optional[Dict[str, Any]]:
+             create_session: bool = True, ttl: int = 3600) -> Optional[Dict[str, Any]]:
         """Authenticate and create tokens/session."""
         user = self.authenticate(provider_name, credentials)
         if not user:
             return None
-        
+
         # Generate access token
-        access_token = self.token_generator.generate(user, expires_in=token_ttl)
-        
-        # Generate refresh token (longer TTL)
-        refresh_token = self.token_generator.generate(user, expires_in=token_ttl * 24)
-        
+        access_token = self.token_generator.generate(user, expires_in=ttl)
+
+        # Generate refresh token in a unique family
+        family_id = secrets.token_urlsafe(16)
+        refresh_ttl = ttl * 24
+        refresh_token = self.token_generator.generate(
+            user,
+            expires_in=refresh_ttl,
+            token_type=TokenType.REFRESH,
+            extra_claims={"fid": family_id},
+        )
+
+        # Store active refresh-token family record
+        self.storage.set(f"refresh_family:{family_id}", refresh_token.value, ttl=refresh_ttl)
+        self.storage.set(
+            f"refresh_meta:{refresh_token.value}",
+            {"fid": family_id, "user_id": user.id, "username": user.username},
+            ttl=refresh_ttl,
+        )
+
         result = {
             "user": user,
             "access_token": access_token.value,
             "refresh_token": refresh_token.value,
             "token_type": "Bearer",
-            "expires_in": token_ttl,
+            "expires_in": ttl,
+            "family_id": family_id,
         }
-        
+
         # Create session if requested
         if create_session:
             session = self.session_manager.create_session(
@@ -642,43 +1042,84 @@ class Auth:
                 user_agent=credentials.get('user_agent'),
             )
             result["session_id"] = session.id
-        
+
         return result
     
     def verify_token(self, token_value: str) -> Optional[Token]:
         """Verify a token."""
-        if token_value in self.revoked_tokens:
-            return None
-        
         return self.token_generator.verify(token_value)
     
     def revoke_token(self, token_value: str):
         """Revoke a token."""
-        self.revoked_tokens.add(token_value)
+        self.token_generator.revoke(token_value)
     
-    def refresh_token(self, refresh_token_value: str, token_ttl: int = 3600) -> Optional[Dict[str, str]]:
-        """Refresh an access token using a refresh token."""
-        token = self.verify_token(refresh_token_value)
-        if not token:
-            return None
-        
-        # Get user from token metadata
-        user = User(
+    def _user_from_token(self, token: Token) -> User:
+        """Reconstruct a User from a verified token's metadata."""
+        return User(
             id=token.user_id,
             username=token.metadata.get('username', ''),
             roles=set(token.metadata.get('roles', [])),
             permissions=set(token.metadata.get('permissions', [])),
             tenant_id=token.metadata.get('tenant_id'),
         )
-        
-        # Generate new access token
-        new_access_token = self.token_generator.generate(user, expires_in=token_ttl)
-        
+
+    def refresh(self, refresh_token_value: str, token_ttl: int = 3600) -> Optional[Dict[str, Any]]:
+        """Refresh an access token using a refresh token.
+
+        Implements refresh-token rotation with family binding and reuse
+        detection. If the presented refresh token is not the currently active
+        token for its family, the whole family is revoked.
+        """
+        token = self.verify_token(refresh_token_value)
+        if not token or token.type != TokenType.REFRESH:
+            return None
+
+        family_id = token.metadata.get('fid')
+        if not family_id:
+            return None
+
+        active_token = self.storage.get(f"refresh_family:{family_id}")
+        if active_token is None or active_token != refresh_token_value:
+            _revoke_refresh_family(
+                self.storage,
+                family_id,
+                extra_tokens=[refresh_token_value, active_token] if active_token else [refresh_token_value],
+            )
+            return None
+
+        # Valid refresh: revoke the old token and rotate to a new one
+        user = self._user_from_token(token)
+        new_access = self.token_generator.generate(user, expires_in=token_ttl)
+        refresh_ttl = token_ttl * 24
+        new_refresh = self.token_generator.generate(
+            user,
+            expires_in=refresh_ttl,
+            token_type=TokenType.REFRESH,
+            extra_claims={"fid": family_id},
+        )
+
+        self.storage.set(f"revoked:{refresh_token_value}", True)
+        self.storage.delete(f"token:{refresh_token_value}")
+        self.storage.delete(f"refresh_meta:{refresh_token_value}")
+        self.storage.set(f"refresh_family:{family_id}", new_refresh.value, ttl=refresh_ttl)
+        self.storage.set(
+            f"refresh_meta:{new_refresh.value}",
+            {"fid": family_id, "user_id": user.id, "username": user.username},
+            ttl=refresh_ttl,
+        )
+
         return {
-            "access_token": new_access_token.value,
+            "user": user,
+            "access_token": new_access.value,
+            "refresh_token": new_refresh.value,
             "token_type": "Bearer",
             "expires_in": token_ttl,
+            "family_id": family_id,
         }
+
+    def refresh_token(self, refresh_token_value: str, token_ttl: int = 3600) -> Optional[Dict[str, Any]]:
+        """Refresh an access token (alias for :meth:`refresh`)."""
+        return self.refresh(refresh_token_value, token_ttl=token_ttl)
     
     def check_permission(self, user: User, action: str, resource: str,
                         context: Optional[Dict[str, Any]] = None) -> bool:
@@ -718,8 +1159,10 @@ class Policy:
 
 
 __all__ = [
-    'Auth', 'User', 'Token', 'Session', 'PolicyRule', 'Policy',
+    'Auth', 'AuthError', 'User', 'Token', 'Session', 'PolicyRule', 'Policy',
     'TokenType', 'AuthMethod',
+    'Clock', 'RealClock', 'FixedClock',
+    'StorageBackend', 'InMemoryStorage',
     'AuthProvider', 'LocalAuthProvider', 'APIKeyAuthProvider',
     'PasswordHasher', 'PBKDF2Hasher',
     'TokenGenerator', 'SimpleJWTGenerator', 'OpaqueTokenGenerator',

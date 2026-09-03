@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::num::NonZeroU32;
 use std::str::FromStr;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{
@@ -43,6 +43,7 @@ pub enum AuthError {
     Crypto(String),
     TimeError,
     MissingField(String),
+    InvalidSecret,
 }
 
 impl fmt::Display for AuthError {
@@ -59,6 +60,7 @@ impl fmt::Display for AuthError {
             AuthError::Crypto(msg) => write!(f, "cryptographic error: {msg}"),
             AuthError::TimeError => write!(f, "system time error"),
             AuthError::MissingField(name) => write!(f, "missing field: {name}"),
+            AuthError::InvalidSecret => write!(f, "invalid secret"),
         }
     }
 }
@@ -102,6 +104,103 @@ fn random_bytes(len: usize) -> Result<Vec<u8>, AuthError> {
 
 fn random_id(len: usize) -> Result<String, AuthError> {
     Ok(URL_SAFE_NO_PAD.encode(&random_bytes(len)?))
+}
+
+// ============================================================================
+// Storage Backend
+// ============================================================================
+
+/// Pluggable key/value storage backend for tokens, sessions, and revocation.
+pub trait StorageBackend: Send + Sync {
+    /// Get the value for a key, if it exists.
+    fn get(&self, key: &str) -> Option<String>;
+    /// Store a value under a key.
+    fn set(&self, key: &str, value: String) -> bool;
+    /// Delete a key and its value.
+    fn delete(&self, key: &str) -> bool;
+    /// Check if a key exists.
+    fn has(&self, key: &str) -> bool;
+    /// Return all keys matching the given prefix.
+    fn keys(&self, prefix: &str) -> Vec<String>;
+    /// Remove all stored data.
+    fn clear(&self);
+}
+
+/// In-memory storage backend backed by a `Mutex<HashMap>`.
+pub struct InMemoryStorage {
+    data: Mutex<HashMap<String, String>>,
+}
+
+impl InMemoryStorage {
+    /// Create a new empty in-memory storage backend.
+    pub fn new() -> Self {
+        Self {
+            data: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl Default for InMemoryStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StorageBackend for InMemoryStorage {
+    fn get(&self, key: &str) -> Option<String> {
+        self.data.lock().unwrap().get(key).cloned()
+    }
+
+    fn set(&self, key: &str, value: String) -> bool {
+        self.data.lock().unwrap().insert(key.to_string(), value);
+        true
+    }
+
+    fn delete(&self, key: &str) -> bool {
+        self.data.lock().unwrap().remove(key).is_some()
+    }
+
+    fn has(&self, key: &str) -> bool {
+        self.data.lock().unwrap().contains_key(key)
+    }
+
+    fn keys(&self, prefix: &str) -> Vec<String> {
+        self.data
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|k| k.starts_with(prefix))
+            .cloned()
+            .collect()
+    }
+
+    fn clear(&self) {
+        self.data.lock().unwrap().clear();
+    }
+}
+
+fn storage_revoked_key(token_value: &str) -> String {
+    format!("revoked:{}", token_value)
+}
+
+fn storage_token_key(token_value: &str) -> String {
+    format!("opaque:{}", token_value)
+}
+
+fn storage_session_key(session_id: &str) -> String {
+    format!("session:{}", session_id)
+}
+
+fn storage_user_sessions_key(user_id: &str) -> String {
+    format!("user_sessions:{}", user_id)
+}
+
+fn storage_refresh_family_key(family_id: &str) -> String {
+    format!("refresh_family:{}", family_id)
+}
+
+fn storage_refresh_token_key(token_value: &str) -> String {
+    format!("refresh:{}", token_value)
 }
 
 // ============================================================================
@@ -285,19 +384,33 @@ impl PolicyRule {
     }
 
     fn matches_pattern(&self, pattern: &str, value: &str) -> bool {
-        if pattern == "*" {
-            return true;
-        }
-        if !pattern.contains('*') {
-            return pattern == value;
+        let p: Vec<char> = pattern.chars().collect();
+        let s: Vec<char> = value.chars().collect();
+        let (mut pi, mut si) = (0usize, 0usize);
+        let (mut star_pi, mut star_si) = (None::<usize>, None::<usize>);
+
+        while si < s.len() {
+            if pi < p.len() && (p[pi] == s[si] || p[pi] == '?') {
+                pi += 1;
+                si += 1;
+            } else if pi < p.len() && p[pi] == '*' {
+                star_pi = Some(pi);
+                star_si = Some(si);
+                pi += 1;
+            } else if let (Some(sp), Some(ss)) = (star_pi, star_si) {
+                pi = sp + 1;
+                star_si = Some(ss + 1);
+                si = ss + 1;
+            } else {
+                return false;
+            }
         }
 
-        let parts: Vec<&str> = pattern.split('*').collect();
-        if parts.len() == 2 {
-            return value.starts_with(parts[0]) && value.ends_with(parts[1]);
+        while pi < p.len() && p[pi] == '*' {
+            pi += 1;
         }
 
-        false
+        pi == p.len()
     }
 }
 
@@ -381,13 +494,38 @@ impl Default for PBKDF2Hasher {
 pub trait TokenGenerator: Send + Sync {
     /// Generate a token for the given user.
     fn generate(&self, user: &User, expires_in: i64) -> Result<Token, AuthError>;
+    /// Generate a refresh token for the given user and family.
+    fn generate_refresh(
+        &self,
+        user: &User,
+        expires_in: i64,
+        family_id: &str,
+    ) -> Result<Token, AuthError> {
+        let mut token = self.generate(user, expires_in)?;
+        token.token_type = TokenType::Refresh;
+        token
+            .metadata
+            .insert("fid".to_string(), Value::String(family_id.to_string()));
+        Ok(token)
+    }
     /// Verify and decode a token value.
     fn verify(&self, token_value: &str) -> Result<Option<Token>, AuthError>;
+    /// Revoke a token value.
+    fn revoke(&self, token_value: &str);
+    /// Check whether a token value has been revoked.
+    fn is_revoked(&self, token_value: &str) -> bool;
 }
 
 /// Simple JWT token generator using HMAC-SHA256.
 pub struct SimpleJWTGenerator {
     key: hmac::Key,
+    issuer: Option<String>,
+    audience: Option<String>,
+    key_id: Option<String>,
+    expected_issuer: Option<String>,
+    expected_audience: Option<String>,
+    allowed_algorithms: Vec<String>,
+    storage: Arc<Mutex<dyn StorageBackend + Send + Sync>>,
 }
 
 impl SimpleJWTGenerator {
@@ -395,12 +533,67 @@ impl SimpleJWTGenerator {
     pub fn new(secret: &str) -> Self {
         Self {
             key: hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes()),
+            issuer: None,
+            audience: None,
+            key_id: None,
+            expected_issuer: None,
+            expected_audience: None,
+            allowed_algorithms: vec!["HS256".to_string()],
+            storage: Arc::new(Mutex::new(InMemoryStorage::new())),
         }
+    }
+
+    /// Use a custom storage backend.
+    pub fn with_storage(mut self, storage: Arc<Mutex<dyn StorageBackend + Send + Sync>>) -> Self {
+        self.storage = storage;
+        self
+    }
+
+    /// Set the token issuer.
+    pub fn with_issuer(mut self, issuer: &str) -> Self {
+        self.issuer = Some(issuer.to_string());
+        self
+    }
+
+    /// Set the token audience.
+    pub fn with_audience(mut self, audience: &str) -> Self {
+        self.audience = Some(audience.to_string());
+        self
+    }
+
+    /// Set the key ID for the token header.
+    pub fn with_key_id(mut self, key_id: &str) -> Self {
+        self.key_id = Some(key_id.to_string());
+        self
+    }
+
+    /// Set the expected issuer for verification.
+    pub fn with_expected_issuer(mut self, issuer: &str) -> Self {
+        self.expected_issuer = Some(issuer.to_string());
+        self
+    }
+
+    /// Set the expected audience for verification.
+    pub fn with_expected_audience(mut self, audience: &str) -> Self {
+        self.expected_audience = Some(audience.to_string());
+        self
+    }
+
+    /// Set the allowed signing algorithms.
+    pub fn with_allowed_algorithms(mut self, algorithms: Vec<String>) -> Self {
+        self.allowed_algorithms = algorithms;
+        self
     }
 }
 
-impl TokenGenerator for SimpleJWTGenerator {
-    fn generate(&self, user: &User, expires_in: i64) -> Result<Token, AuthError> {
+impl SimpleJWTGenerator {
+    fn generate_jwt(
+        &self,
+        user: &User,
+        expires_in: i64,
+        token_type: TokenType,
+        family_id: Option<&str>,
+    ) -> Result<Token, AuthError> {
         let issued_at = SystemTime::now();
         let expires_at = if expires_in > 0 {
             issued_at + Duration::from_secs(expires_in as u64)
@@ -411,16 +604,39 @@ impl TokenGenerator for SimpleJWTGenerator {
         let iat = issued_at.duration_since(UNIX_EPOCH)?.as_secs();
         let exp = expires_at.duration_since(UNIX_EPOCH)?.as_secs();
 
-        let header = serde_json::json!({"alg": "HS256", "typ": "JWT"});
-        let payload = serde_json::json!({
+        let jti = random_id(16)?;
+
+        let mut header = serde_json::json!({"alg": "HS256", "typ": "JWT"});
+        if let Some(kid) = &self.key_id {
+            header["kid"] = serde_json::Value::String(kid.clone());
+        }
+
+        let type_str = match token_type {
+            TokenType::JWT => "JWT",
+            TokenType::Opaque => "Opaque",
+            TokenType::Refresh => "Refresh",
+        };
+
+        let mut payload = serde_json::json!({
             "user_id": user.id,
             "username": user.username,
             "roles": user.roles.iter().collect::<Vec<_>>(),
             "permissions": user.permissions.iter().collect::<Vec<_>>(),
             "tenant_id": user.tenant_id,
+            "jti": jti,
             "iat": iat,
             "exp": exp,
+            "token_type": type_str,
         });
+        if let Some(iss) = &self.issuer {
+            payload["iss"] = serde_json::Value::String(iss.clone());
+        }
+        if let Some(aud) = &self.audience {
+            payload["aud"] = serde_json::Value::String(aud.clone());
+        }
+        if let Some(fid) = family_id {
+            payload["fid"] = serde_json::Value::String(fid.to_string());
+        }
 
         let header_b64 = URL_SAFE_NO_PAD.encode(&serde_json::to_vec(&header)?);
         let payload_b64 = URL_SAFE_NO_PAD.encode(&serde_json::to_vec(&payload)?);
@@ -433,6 +649,7 @@ impl TokenGenerator for SimpleJWTGenerator {
 
         let mut metadata = HashMap::new();
         metadata.insert("username".to_string(), Value::String(user.username.clone()));
+        metadata.insert("jti".to_string(), Value::String(jti.clone()));
         metadata.insert(
             "roles".to_string(),
             Value::Array(
@@ -454,15 +671,62 @@ impl TokenGenerator for SimpleJWTGenerator {
         if let Some(tenant) = &user.tenant_id {
             metadata.insert("tenant_id".to_string(), Value::String(tenant.clone()));
         }
+        if let Some(fid) = family_id {
+            metadata.insert("fid".to_string(), Value::String(fid.to_string()));
+        }
 
         Ok(Token {
             value: token_value,
-            token_type: TokenType::JWT,
+            token_type,
             user_id: user.id.clone(),
             expires_at,
             issued_at,
             metadata,
         })
+    }
+
+    fn extract_family_id(&self, token_value: &str) -> Option<String> {
+        let parts: Vec<&str> = token_value.split('.').collect();
+        if parts.len() != 3 {
+            return None;
+        }
+        let payload_json = URL_SAFE_NO_PAD.decode(parts[1]).ok()?;
+        let payload: Value = serde_json::from_slice(&payload_json).ok()?;
+        payload.get("fid").and_then(Value::as_str).map(String::from)
+    }
+
+    fn revoke_family(&self, family_id: &str) {
+        let storage = self.storage.lock().unwrap();
+        let family_key = storage_refresh_family_key(family_id);
+        storage.delete(&family_key);
+        for key in storage.keys("refresh:") {
+            if let Some(json) = storage.get(&key) {
+                if let Ok(v) = serde_json::from_str::<Value>(&json) {
+                    if v.get("metadata")
+                        .and_then(|m| m.get("fid"))
+                        .and_then(Value::as_str)
+                        == Some(family_id)
+                    {
+                        storage.delete(&key);
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl TokenGenerator for SimpleJWTGenerator {
+    fn generate(&self, user: &User, expires_in: i64) -> Result<Token, AuthError> {
+        self.generate_jwt(user, expires_in, TokenType::JWT, None)
+    }
+
+    fn generate_refresh(
+        &self,
+        user: &User,
+        expires_in: i64,
+        family_id: &str,
+    ) -> Result<Token, AuthError> {
+        self.generate_jwt(user, expires_in, TokenType::Refresh, Some(family_id))
     }
 
     fn verify(&self, token_value: &str) -> Result<Option<Token>, AuthError> {
@@ -471,14 +735,65 @@ impl TokenGenerator for SimpleJWTGenerator {
             return Ok(None);
         }
 
+        // Decode and validate header
+        let header_json = match URL_SAFE_NO_PAD.decode(parts[0]) {
+            Ok(v) => v,
+            Err(_) => return Ok(None),
+        };
+        let header: Value = match serde_json::from_slice(&header_json) {
+            Ok(v) => v,
+            Err(_) => return Ok(None),
+        };
+        let alg = header
+            .get("alg")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AuthError::InvalidToken)?;
+        if !self.allowed_algorithms.iter().any(|a| a == alg) {
+            return Ok(None);
+        }
+        if let Some(expected_kid) = &self.key_id {
+            let kid = header.get("kid").and_then(Value::as_str).unwrap_or("");
+            if kid != expected_kid {
+                return Ok(None);
+            }
+        }
+
         let message = format!("{}.{}", parts[0], parts[1]);
-        let signature = URL_SAFE_NO_PAD.decode(parts[2])?;
+        let signature = match URL_SAFE_NO_PAD.decode(parts[2]) {
+            Ok(v) => v,
+            Err(_) => return Ok(None),
+        };
         if hmac::verify(&self.key, message.as_bytes(), &signature).is_err() {
             return Ok(None);
         }
 
-        let payload_json = URL_SAFE_NO_PAD.decode(parts[1])?;
-        let payload: Value = serde_json::from_slice(&payload_json)?;
+        let payload_json = match URL_SAFE_NO_PAD.decode(parts[1]) {
+            Ok(v) => v,
+            Err(_) => return Ok(None),
+        };
+        let payload: Value = match serde_json::from_slice(&payload_json) {
+            Ok(v) => v,
+            Err(_) => return Ok(None),
+        };
+
+        if let Some(expected_iss) = &self.expected_issuer {
+            if payload.get("iss").and_then(Value::as_str) != Some(expected_iss) {
+                return Ok(None);
+            }
+        }
+        if let Some(expected_aud) = &self.expected_audience {
+            if payload.get("aud").and_then(Value::as_str) != Some(expected_aud) {
+                return Ok(None);
+            }
+        }
+        if payload.get("jti").and_then(Value::as_str).is_none() {
+            return Ok(None);
+        }
+
+        let token_type = match payload.get("token_type").and_then(Value::as_str) {
+            Some("Refresh") => TokenType::Refresh,
+            _ => TokenType::JWT,
+        };
 
         let user_id = payload
             .get("user_id")
@@ -491,6 +806,11 @@ impl TokenGenerator for SimpleJWTGenerator {
             .to_string();
         let tenant_id = payload
             .get("tenant_id")
+            .and_then(Value::as_str)
+            .map(String::from);
+
+        let family_id = payload
+            .get("fid")
             .and_then(Value::as_str)
             .map(String::from);
 
@@ -535,6 +855,16 @@ impl TokenGenerator for SimpleJWTGenerator {
         let mut metadata = HashMap::new();
         metadata.insert("username".to_string(), Value::String(username.clone()));
         metadata.insert(
+            "jti".to_string(),
+            Value::String(
+                payload
+                    .get("jti")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+            ),
+        );
+        metadata.insert(
             "roles".to_string(),
             Value::Array(roles.iter().map(|s| Value::String(s.clone())).collect()),
         );
@@ -550,40 +880,120 @@ impl TokenGenerator for SimpleJWTGenerator {
         if let Some(tenant) = &tenant_id {
             metadata.insert("tenant_id".to_string(), Value::String(tenant.clone()));
         }
+        if let Some(fid) = &family_id {
+            metadata.insert("fid".to_string(), Value::String(fid.clone()));
+        }
 
         Ok(Some(Token {
             value: token_value.to_string(),
-            token_type: TokenType::JWT,
+            token_type,
             user_id: user_id.to_string(),
             expires_at,
             issued_at,
             metadata,
         }))
     }
+
+    fn revoke(&self, token_value: &str) {
+        self.storage
+            .lock()
+            .unwrap()
+            .set(&storage_revoked_key(token_value), "revoked".to_string());
+        if let Some(fid) = self.extract_family_id(token_value) {
+            self.revoke_family(&fid);
+        }
+    }
+
+    fn is_revoked(&self, token_value: &str) -> bool {
+        self.storage
+            .lock()
+            .unwrap()
+            .has(&storage_revoked_key(token_value))
+    }
+}
+
+fn token_to_json(token: &Token) -> Result<String, AuthError> {
+    let token_type = match token.token_type {
+        TokenType::JWT => "JWT",
+        TokenType::Opaque => "Opaque",
+        TokenType::Refresh => "Refresh",
+    };
+    let expires_at = token.expires_at.duration_since(UNIX_EPOCH)?.as_secs();
+    let issued_at = token.issued_at.duration_since(UNIX_EPOCH)?.as_secs();
+    let metadata = Value::Object(token.metadata.clone().into_iter().collect());
+    let value = serde_json::json!({
+        "value": token.value,
+        "token_type": token_type,
+        "user_id": token.user_id,
+        "expires_at": expires_at,
+        "issued_at": issued_at,
+        "metadata": metadata,
+    });
+    Ok(serde_json::to_string(&value)?)
+}
+
+fn token_from_json(token_value: &str, s: &str) -> Result<Option<Token>, AuthError> {
+    let v: Value = serde_json::from_str(s)?;
+    let token_type = match v["token_type"].as_str() {
+        Some("JWT") => TokenType::JWT,
+        Some("Opaque") => TokenType::Opaque,
+        Some("Refresh") => TokenType::Refresh,
+        _ => return Ok(None),
+    };
+    let user_id = v["user_id"].as_str().unwrap_or("").to_string();
+    let expires_at = v["expires_at"]
+        .as_u64()
+        .map(|t| UNIX_EPOCH + Duration::from_secs(t))
+        .unwrap_or(UNIX_EPOCH);
+    let issued_at = v["issued_at"]
+        .as_u64()
+        .map(|t| UNIX_EPOCH + Duration::from_secs(t))
+        .unwrap_or(UNIX_EPOCH);
+    let metadata = v["metadata"]
+        .as_object()
+        .map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
+
+    if SystemTime::now() > expires_at {
+        return Ok(None);
+    }
+
+    Ok(Some(Token {
+        value: token_value.to_string(),
+        token_type,
+        user_id,
+        expires_at,
+        issued_at,
+        metadata,
+    }))
 }
 
 /// Opaque token generator with server-side storage.
 pub struct OpaqueTokenGenerator {
-    tokens: Mutex<HashMap<String, Token>>,
+    storage: Arc<Mutex<dyn StorageBackend + Send + Sync>>,
 }
 
 impl OpaqueTokenGenerator {
     /// Create a new opaque token generator.
     pub fn new() -> Self {
         Self {
-            tokens: Mutex::new(HashMap::new()),
+            storage: Arc::new(Mutex::new(InMemoryStorage::new())),
         }
     }
-}
 
-impl Default for OpaqueTokenGenerator {
-    fn default() -> Self {
-        Self::new()
+    /// Use a custom storage backend.
+    pub fn with_storage(mut self, storage: Arc<Mutex<dyn StorageBackend + Send + Sync>>) -> Self {
+        self.storage = storage;
+        self
     }
-}
 
-impl TokenGenerator for OpaqueTokenGenerator {
-    fn generate(&self, user: &User, expires_in: i64) -> Result<Token, AuthError> {
+    fn generate_opaque(
+        &self,
+        user: &User,
+        expires_in: i64,
+        token_type: TokenType,
+        family_id: Option<&str>,
+    ) -> Result<Token, AuthError> {
         let token_value = random_id(32)?;
         let issued_at = SystemTime::now();
         let expires_at = if expires_in > 0 {
@@ -615,41 +1025,102 @@ impl TokenGenerator for OpaqueTokenGenerator {
         if let Some(tenant) = &user.tenant_id {
             metadata.insert("tenant_id".to_string(), Value::String(tenant.clone()));
         }
+        if let Some(fid) = family_id {
+            metadata.insert("fid".to_string(), Value::String(fid.to_string()));
+        }
 
         let token = Token {
             value: token_value.clone(),
-            token_type: TokenType::Opaque,
+            token_type,
             user_id: user.id.clone(),
             expires_at,
             issued_at,
             metadata,
         };
 
-        self.tokens
-            .lock()
-            .unwrap()
-            .insert(token_value, token.clone());
+        let json = token_to_json(&token)?;
+        let key = match token_type {
+            TokenType::Refresh => storage_refresh_token_key(&token_value),
+            _ => storage_token_key(&token_value),
+        };
+        self.storage.lock().unwrap().set(&key, json);
         Ok(token)
-    }
-
-    fn verify(&self, token_value: &str) -> Result<Option<Token>, AuthError> {
-        let tokens = self.tokens.lock().unwrap();
-        if let Some(token) = tokens.get(token_value) {
-            if token.is_expired() {
-                Ok(None)
-            } else {
-                Ok(Some(token.clone()))
-            }
-        } else {
-            Ok(None)
-        }
     }
 }
 
-impl OpaqueTokenGenerator {
-    /// Revoke an opaque token.
-    pub fn revoke(&self, token_value: &str) {
-        self.tokens.lock().unwrap().remove(token_value);
+impl Default for OpaqueTokenGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TokenGenerator for OpaqueTokenGenerator {
+    fn generate(&self, user: &User, expires_in: i64) -> Result<Token, AuthError> {
+        self.generate_opaque(user, expires_in, TokenType::Opaque, None)
+    }
+
+    fn generate_refresh(
+        &self,
+        user: &User,
+        expires_in: i64,
+        family_id: &str,
+    ) -> Result<Token, AuthError> {
+        self.generate_opaque(user, expires_in, TokenType::Refresh, Some(family_id))
+    }
+
+    fn verify(&self, token_value: &str) -> Result<Option<Token>, AuthError> {
+        if self.is_revoked(token_value) {
+            return Ok(None);
+        }
+        let storage = self.storage.lock().unwrap();
+        if let Some(s) = storage.get(&storage_token_key(token_value)) {
+            drop(storage);
+            return token_from_json(token_value, &s);
+        }
+        if let Some(s) = storage.get(&storage_refresh_token_key(token_value)) {
+            drop(storage);
+            return token_from_json(token_value, &s);
+        }
+        Ok(None)
+    }
+
+    fn revoke(&self, token_value: &str) {
+        let storage = self.storage.lock().unwrap();
+        storage.set(&storage_revoked_key(token_value), "revoked".to_string());
+
+        if let Some(s) = storage.get(&storage_refresh_token_key(token_value)) {
+            if let Ok(v) = serde_json::from_str::<Value>(&s) {
+                if let Some(fid) = v
+                    .get("metadata")
+                    .and_then(|m| m.get("fid"))
+                    .and_then(Value::as_str)
+                {
+                    storage.delete(&storage_refresh_family_key(fid));
+                    for key in storage.keys("refresh:") {
+                        if let Some(json) = storage.get(&key) {
+                            if let Ok(v2) = serde_json::from_str::<Value>(&json) {
+                                if v2.get("metadata")
+                                    .and_then(|m| m.get("fid"))
+                                    .and_then(Value::as_str)
+                                    == Some(fid)
+                                {
+                                    storage.delete(&key);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            storage.delete(&storage_refresh_token_key(token_value));
+        }
+        storage.delete(&storage_token_key(token_value));
+    }
+
+    fn is_revoked(&self, token_value: &str) -> bool {
+        self.storage
+            .lock()
+            .unwrap()
+            .has(&storage_revoked_key(token_value))
     }
 }
 
@@ -697,14 +1168,14 @@ impl LocalAuthProvider {
         username: &str,
         password: &str,
         email: Option<&str>,
-        roles: Option<HashSet<String>>,
-        permissions: Option<HashSet<String>>,
+        roles: Option<&HashSet<String>>,
+        permissions: Option<&HashSet<String>>,
         tenant_id: Option<&str>,
     ) -> Result<User, AuthError> {
         let user_id = random_id(16)?;
         let hashed_password = self.password_hasher.hash(password)?;
-        let roles = roles.unwrap_or_default();
-        let permissions = permissions.unwrap_or_default();
+        let roles = roles.cloned().unwrap_or_default();
+        let permissions = permissions.cloned().unwrap_or_default();
 
         let record = LocalUserRecord {
             id: user_id.clone(),
@@ -861,12 +1332,34 @@ impl PolicyEngine {
         resource: &str,
         context: Option<&HashMap<String, String>>,
     ) -> bool {
-        let permission = format!("{}:{}", action, resource);
+        let rules = self.rules.lock().unwrap().clone();
 
+        let matches_rule = |rule: &PolicyRule| -> bool {
+            if rule.matches(&format!("user:{}", user.username), action, resource, context) {
+                return true;
+            }
+            for role in &user.roles {
+                if rule.matches(&format!("role:{}", role), action, resource, context) {
+                    return true;
+                }
+            }
+            rule.matches("*", action, resource, context)
+        };
+
+        // First pass: explicit deny rules override everything
+        for rule in &rules {
+            if matches_rule(rule) && rule.effect == "deny" {
+                return false;
+            }
+        }
+
+        // Direct permissions
+        let permission = format!("{}:{}", action, resource);
         if user.has_permission(&permission) {
             return true;
         }
 
+        // Role-based permissions
         let role_permissions = self.role_permissions.lock().unwrap().clone();
         for role in &user.roles {
             if let Some(perms) = role_permissions.get(role) {
@@ -876,25 +1369,10 @@ impl PolicyEngine {
             }
         }
 
-        let rules = self.rules.lock().unwrap().clone();
+        // Second pass: allow rules
         for rule in &rules {
-            if rule.matches(
-                &format!("user:{}", user.username),
-                action,
-                resource,
-                context,
-            ) {
-                return rule.effect == "allow";
-            }
-
-            for role in &user.roles {
-                if rule.matches(&format!("role:{}", role), action, resource, context) {
-                    return rule.effect == "allow";
-                }
-            }
-
-            if rule.matches("*", action, resource, context) {
-                return rule.effect == "allow";
+            if matches_rule(rule) && rule.effect == "allow" {
+                return true;
             }
         }
 
@@ -912,9 +1390,68 @@ impl Default for PolicyEngine {
 // Session Manager
 // ============================================================================
 
+fn session_to_json(session: &Session) -> Result<String, AuthError> {
+    let created_at = session.created_at.duration_since(UNIX_EPOCH)?.as_secs();
+    let last_activity = session.last_activity.duration_since(UNIX_EPOCH)?.as_secs();
+    let expires_value = if let Some(exp) = session.expires_at {
+        let secs = exp.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        serde_json::json!(secs)
+    } else {
+        serde_json::Value::Null
+    };
+    let metadata = Value::Object(session.metadata.clone().into_iter().collect());
+    let value = serde_json::json!({
+        "id": session.id,
+        "user_id": session.user_id,
+        "device_id": session.device_id,
+        "ip_address": session.ip_address,
+        "user_agent": session.user_agent,
+        "created_at": created_at,
+        "last_activity": last_activity,
+        "expires_at": expires_value,
+        "metadata": metadata,
+    });
+    Ok(serde_json::to_string(&value)?)
+}
+
+fn session_from_json(s: &str) -> Option<Session> {
+    let v: Value = serde_json::from_str(s).ok()?;
+    let id = v["id"].as_str()?.to_string();
+    let user_id = v["user_id"].as_str()?.to_string();
+    let device_id = v["device_id"].as_str().map(String::from);
+    let ip_address = v["ip_address"].as_str().map(String::from);
+    let user_agent = v["user_agent"].as_str().map(String::from);
+    let created_at = v["created_at"]
+        .as_u64()
+        .map(|t| UNIX_EPOCH + Duration::from_secs(t))?;
+    let last_activity = v["last_activity"]
+        .as_u64()
+        .map(|t| UNIX_EPOCH + Duration::from_secs(t))?;
+    let expires_at = if v["expires_at"].is_null() {
+        None
+    } else {
+        v["expires_at"].as_u64().map(|t| UNIX_EPOCH + Duration::from_secs(t))
+    };
+    let metadata = v["metadata"]
+        .as_object()
+        .map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
+    Some(Session {
+        id,
+        user_id,
+        device_id,
+        ip_address,
+        user_agent,
+        created_at,
+        last_activity,
+        expires_at,
+        metadata,
+    })
+}
+
 /// Manages user sessions.
 pub struct SessionManager {
-    sessions: Mutex<HashMap<String, Session>>,
+    storage: Arc<Mutex<dyn StorageBackend + Send + Sync>>,
     default_ttl: i64,
 }
 
@@ -922,9 +1459,17 @@ impl SessionManager {
     /// Create a new session manager with the given default TTL in seconds.
     pub fn new(default_ttl: i64) -> Self {
         Self {
-            sessions: Mutex::new(HashMap::new()),
+            storage: Arc::new(Mutex::new(InMemoryStorage::new())),
             default_ttl,
         }
+    }
+
+    /// Create a new session manager with the given storage backend.
+    pub fn new_with_storage(
+        default_ttl: i64,
+        storage: Arc<Mutex<dyn StorageBackend + Send + Sync>>,
+    ) -> Self {
+        Self { storage, default_ttl }
     }
 
     /// Create a new session.
@@ -958,41 +1503,132 @@ impl SessionManager {
             metadata: HashMap::new(),
         };
 
-        self.sessions
+        let json = session_to_json(&session)?;
+        self.storage
             .lock()
             .unwrap()
-            .insert(id.clone(), session.clone());
+            .set(&storage_session_key(&id), json);
+
+        let index_key = storage_user_sessions_key(user_id);
+        let list_str = self
+            .storage
+            .lock()
+            .unwrap()
+            .get(&index_key)
+            .unwrap_or_else(|| "[]".to_string());
+        let mut list: Vec<String> = serde_json::from_str(&list_str).unwrap_or_default();
+        list.push(id.clone());
+        self.storage
+            .lock()
+            .unwrap()
+            .set(&index_key, serde_json::to_string(&list).unwrap());
+
         Ok(session)
     }
 
     /// Get a session by ID, updating its last activity.
     pub fn get_session(&self, session_id: &str) -> Option<Session> {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(session) = sessions.get_mut(session_id) {
-            if session.is_expired() {
-                return None;
-            }
-            session.touch();
-            return Some(session.clone());
+        let s = self
+            .storage
+            .lock()
+            .unwrap()
+            .get(&storage_session_key(session_id))?;
+        let mut session = session_from_json(&s)?;
+        if session.is_expired() {
+            return None;
         }
-        None
+        session.touch();
+        let json = session_to_json(&session).ok()?;
+        self.storage
+            .lock()
+            .unwrap()
+            .set(&storage_session_key(session_id), json);
+        Some(session)
     }
 
     /// Revoke a session by ID.
     pub fn revoke_session(&self, session_id: &str) {
-        self.sessions.lock().unwrap().remove(session_id);
+        let key = storage_session_key(session_id);
+        let session_json = self.storage.lock().unwrap().get(&key);
+        if let Some(s) = session_json {
+            if let Ok(v) = serde_json::from_str::<Value>(&s) {
+                if let Some(user_id) = v["user_id"].as_str() {
+                    let index_key = storage_user_sessions_key(user_id);
+                    let list_str = self.storage.lock().unwrap().get(&index_key);
+                    if let Some(list_str) = list_str {
+                        if let Ok(list) = serde_json::from_str::<Vec<String>>(&list_str) {
+                            let updated: Vec<String> =
+                                list.into_iter().filter(|x| x != session_id).collect();
+                            if updated.is_empty() {
+                                self.storage.lock().unwrap().delete(&index_key);
+                            } else {
+                                self.storage.lock().unwrap().set(
+                                    &index_key,
+                                    serde_json::to_string(&updated).unwrap(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.storage.lock().unwrap().delete(&key);
     }
 
     /// Revoke all sessions for a user.
     pub fn revoke_user_sessions(&self, user_id: &str) {
-        let mut sessions = self.sessions.lock().unwrap();
-        sessions.retain(|_, s| s.user_id != user_id);
+        let index_key = storage_user_sessions_key(user_id);
+        let list_str = self.storage.lock().unwrap().get(&index_key);
+        if let Some(list_str) = list_str {
+            if let Ok(list) = serde_json::from_str::<Vec<String>>(&list_str) {
+                for id in list {
+                    self.storage
+                        .lock()
+                        .unwrap()
+                        .delete(&storage_session_key(&id));
+                }
+            }
+        }
+        self.storage.lock().unwrap().delete(&index_key);
     }
 
     /// Remove all expired sessions.
     pub fn cleanup_expired(&self) {
-        let mut sessions = self.sessions.lock().unwrap();
-        sessions.retain(|_, s| !s.is_expired());
+        let keys = self.storage.lock().unwrap().keys("session:");
+        for key in keys {
+            let s = self.storage.lock().unwrap().get(&key);
+            if let Some(s) = s {
+                if let Some(session) = session_from_json(&s) {
+                    if session.is_expired() {
+                        if let Ok(v) = serde_json::from_str::<Value>(&s) {
+                            if let Some(user_id) = v["user_id"].as_str() {
+                                let index_key = storage_user_sessions_key(user_id);
+                                let list_str = self.storage.lock().unwrap().get(&index_key);
+                                if let Some(list_str) = list_str {
+                                    if let Ok(list) =
+                                        serde_json::from_str::<Vec<String>>(&list_str)
+                                    {
+                                        let updated: Vec<String> = list
+                                            .into_iter()
+                                            .filter(|x| x != session.id.as_str())
+                                            .collect();
+                                        if updated.is_empty() {
+                                            self.storage.lock().unwrap().delete(&index_key);
+                                        } else {
+                                            self.storage.lock().unwrap().set(
+                                                &index_key,
+                                                serde_json::to_string(&updated).unwrap(),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        self.storage.lock().unwrap().delete(&key);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1015,6 +1651,7 @@ pub struct LoginResult {
     pub token_type: String,
     pub expires_in: i64,
     pub session_id: Option<String>,
+    pub family_id: Option<String>,
 }
 
 /// Result of a token refresh.
@@ -1025,30 +1662,85 @@ pub struct RefreshResult {
     pub expires_in: i64,
 }
 
+/// Configuration for an Auth instance.
+pub struct AuthConfig {
+    pub issuer: Option<String>,
+    pub audience: Option<String>,
+    pub key_id: Option<String>,
+    pub allowed_algorithms: Vec<String>,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            issuer: None,
+            audience: None,
+            key_id: None,
+            allowed_algorithms: vec!["HS256".to_string()],
+        }
+    }
+}
+
 /// Main authentication and authorization framework.
 pub struct Auth {
     providers: Mutex<HashMap<String, Box<dyn AuthProvider + Send + Sync>>>,
     token_generator: Mutex<Box<dyn TokenGenerator + Send + Sync>>,
+    storage: Arc<Mutex<dyn StorageBackend + Send + Sync>>,
     pub policy_engine: PolicyEngine,
     pub session_manager: SessionManager,
-    revoked_tokens: Mutex<HashSet<String>>,
 }
 
 impl Auth {
-    /// Create a new Auth instance.
-    pub fn new(secret: &str, token_type: TokenType) -> Self {
-        let token_generator: Box<dyn TokenGenerator + Send + Sync> = match token_type {
-            TokenType::JWT => Box::new(SimpleJWTGenerator::new(secret)),
-            _ => Box::new(OpaqueTokenGenerator::new()),
-        };
+    /// Create a new Auth instance with default configuration.
+    pub fn new(
+        secret: &str,
+        token_type: TokenType,
+        storage: Option<Arc<Mutex<dyn StorageBackend + Send + Sync>>>,
+    ) -> Result<Self, AuthError> {
+        Self::new_with_config(secret, token_type, AuthConfig::default(), storage)
+    }
 
-        Self {
+    /// Create a new Auth instance with the provided configuration.
+    pub fn new_with_config(
+        secret: &str,
+        token_type: TokenType,
+        config: AuthConfig,
+        storage: Option<Arc<Mutex<dyn StorageBackend + Send + Sync>>>,
+    ) -> Result<Self, AuthError> {
+        if secret.is_empty() {
+            return Err(AuthError::InvalidSecret);
+        }
+
+        let storage =
+            storage.unwrap_or_else(|| Arc::new(Mutex::new(InMemoryStorage::new())));
+
+        let token_generator: Box<dyn TokenGenerator + Send + Sync> = match token_type {
+            TokenType::JWT => {
+                let mut g = SimpleJWTGenerator::new(secret)
+                    .with_allowed_algorithms(config.allowed_algorithms.clone())
+                    .with_storage(storage.clone());
+                if let Some(iss) = &config.issuer {
+                    g = g.with_issuer(iss).with_expected_issuer(iss);
+                }
+                if let Some(aud) = &config.audience {
+                    g = g.with_audience(aud).with_expected_audience(aud);
+                }
+                if let Some(kid) = &config.key_id {
+                    g = g.with_key_id(kid);
+                }
+                Box::new(g)
+            }
+            _ => Box::new(OpaqueTokenGenerator::new().with_storage(storage.clone())),
+        };
+        let session_manager = SessionManager::new_with_storage(3600, storage.clone());
+
+        Ok(Self {
             providers: Mutex::new(HashMap::new()),
             token_generator: Mutex::new(token_generator),
+            storage,
             policy_engine: PolicyEngine::new(),
-            session_manager: SessionManager::new(3600),
-            revoked_tokens: Mutex::new(HashSet::new()),
-        }
+            session_manager,
+        })
     }
 
     /// Add an authentication provider.
@@ -1078,30 +1770,34 @@ impl Auth {
         provider_name: &str,
         credentials: &HashMap<String, String>,
         create_session: bool,
-        token_ttl: i64,
+        ttl: i64,
     ) -> Result<Option<LoginResult>, AuthError> {
         let user = match self.authenticate(provider_name, credentials)? {
             Some(u) => u,
             None => return Ok(None),
         };
 
-        let access_token = {
+        let family_id = random_id(16)?;
+        let (access_token, refresh_token) = {
             let generator = self.token_generator.lock().unwrap();
-            generator.generate(&user, token_ttl)?
+            let access = generator.generate(&user, ttl)?;
+            let refresh = generator.generate_refresh(&user, ttl * 24, &family_id)?;
+            (access, refresh)
         };
 
-        let refresh_token = {
-            let generator = self.token_generator.lock().unwrap();
-            generator.generate(&user, token_ttl * 24)?
-        };
+        self.storage.lock().unwrap().set(
+            &storage_refresh_family_key(&family_id),
+            refresh_token.value.clone(),
+        );
 
         let mut result = LoginResult {
             user,
             access_token: access_token.value,
             refresh_token: refresh_token.value,
             token_type: "Bearer".to_string(),
-            expires_in: token_ttl,
+            expires_in: ttl,
             session_id: None,
+            family_id: Some(family_id),
         };
 
         if create_session {
@@ -1120,23 +1816,17 @@ impl Auth {
 
     /// Verify a token, respecting the revocation list.
     pub fn verify_token(&self, token_value: &str) -> Result<Option<Token>, AuthError> {
-        {
-            let revoked = self.revoked_tokens.lock().unwrap();
-            if revoked.contains(token_value) {
-                return Ok(None);
-            }
-        }
-
         let generator = self.token_generator.lock().unwrap();
+        if generator.is_revoked(token_value) {
+            return Ok(None);
+        }
         generator.verify(token_value)
     }
 
     /// Revoke a token.
     pub fn revoke_token(&self, token_value: &str) {
-        self.revoked_tokens
-            .lock()
-            .unwrap()
-            .insert(token_value.to_string());
+        let generator = self.token_generator.lock().unwrap();
+        generator.revoke(token_value);
     }
 
     /// Refresh an access token using a refresh token.
@@ -1205,6 +1895,121 @@ impl Auth {
             access_token: new_token.value,
             token_type: "Bearer".to_string(),
             expires_in: token_ttl,
+        }))
+    }
+
+    /// Refresh an access token using a refresh token, with rotation and
+    /// reuse detection.
+    pub fn refresh_tokens(
+        &self,
+        refresh_token_value: &str,
+    ) -> Result<Option<LoginResult>, AuthError> {
+        let token = match self.verify_token(refresh_token_value)? {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+
+        if token.token_type != TokenType::Refresh {
+            return Ok(None);
+        }
+
+        let family_id = token
+            .metadata
+            .get("fid")
+            .and_then(Value::as_str)
+            .ok_or(AuthError::InvalidToken)?
+            .to_string();
+
+        let active = self
+            .storage
+            .lock()
+            .unwrap()
+            .get(&storage_refresh_family_key(&family_id));
+        if active.as_deref() != Some(refresh_token_value) {
+            self.revoke_token(refresh_token_value);
+            return Err(AuthError::InvalidToken);
+        }
+
+        self.revoke_token(refresh_token_value);
+
+        let refresh_ttl = token
+            .expires_at
+            .duration_since(token.issued_at)
+            .map_err(|_| AuthError::TimeError)?
+            .as_secs() as i64;
+        let access_ttl = if refresh_ttl > 0 {
+            (refresh_ttl / 24).max(1)
+        } else {
+            3600
+        };
+        let new_refresh_ttl = access_ttl * 24;
+
+        let username = token
+            .metadata
+            .get("username")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let tenant_id = token
+            .metadata
+            .get("tenant_id")
+            .and_then(Value::as_str)
+            .map(String::from);
+
+        let roles: HashSet<String> = token
+            .metadata
+            .get("roles")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(Value::as_str)
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let permissions: HashSet<String> = token
+            .metadata
+            .get("permissions")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(Value::as_str)
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let user = User {
+            id: token.user_id,
+            username,
+            email: None,
+            roles,
+            permissions,
+            metadata: HashMap::new(),
+            tenant_id,
+        };
+
+        let (new_access, new_refresh) = {
+            let generator = self.token_generator.lock().unwrap();
+            let access = generator.generate(&user, access_ttl)?;
+            let refresh = generator.generate_refresh(&user, new_refresh_ttl, &family_id)?;
+            (access, refresh)
+        };
+
+        self.storage.lock().unwrap().set(
+            &storage_refresh_family_key(&family_id),
+            new_refresh.value.clone(),
+        );
+
+        Ok(Some(LoginResult {
+            user,
+            access_token: new_access.value,
+            refresh_token: new_refresh.value,
+            token_type: "Bearer".to_string(),
+            expires_in: access_ttl,
+            session_id: None,
+            family_id: Some(family_id),
         }))
     }
 
@@ -1404,8 +2209,8 @@ mod tests {
                 "alice",
                 "secure_password",
                 Some("alice@example.com"),
-                Some(roles),
-                Some(permissions),
+                Some(&roles),
+                Some(&permissions),
                 None,
             )
             .unwrap();
@@ -1502,7 +2307,7 @@ mod tests {
 
     #[test]
     fn auth_login_flow() {
-        let auth = Auth::new("test_secret", TokenType::JWT);
+        let auth = Auth::new("test_secret", TokenType::JWT, None).unwrap();
         let provider = LocalAuthProvider::new();
         provider
             .register_user("alice", "secure_password", None, None, None, None)
@@ -1524,7 +2329,7 @@ mod tests {
 
     #[test]
     fn auth_token_verification_and_revocation() {
-        let auth = Auth::new("test_secret", TokenType::JWT);
+        let auth = Auth::new("test_secret", TokenType::JWT, None).unwrap();
         let provider = LocalAuthProvider::new();
         provider
             .register_user("alice", "secure_password", None, None, None, None)
@@ -1545,7 +2350,7 @@ mod tests {
 
     #[test]
     fn auth_refresh_token() {
-        let auth = Auth::new("test_secret", TokenType::JWT);
+        let auth = Auth::new("test_secret", TokenType::JWT, None).unwrap();
         let provider = LocalAuthProvider::new();
         provider
             .register_user("alice", "secure_password", None, None, None, None)
@@ -1568,7 +2373,7 @@ mod tests {
 
     #[test]
     fn auth_check_permission() {
-        let auth = Auth::new("test_secret", TokenType::JWT);
+        let auth = Auth::new("test_secret", TokenType::JWT, None).unwrap();
         auth.policy_engine.add_role_permission("admin", "read:*");
 
         let mut user = User::new("user123", "alice");
@@ -1580,7 +2385,7 @@ mod tests {
 
     #[test]
     fn auth_opaque_tokens() {
-        let auth = Auth::new("test_secret", TokenType::Opaque);
+        let auth = Auth::new("test_secret", TokenType::Opaque, None).unwrap();
         let provider = LocalAuthProvider::new();
         provider
             .register_user("alice", "secure_password", None, None, None, None)

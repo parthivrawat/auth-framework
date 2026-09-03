@@ -210,6 +210,15 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
       
+      - name: Create Go module tag
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          GO_TAG="go/${VERSION}"
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag "${GO_TAG}" ${GITHUB_SHA}
+          git push origin "${GO_TAG}"
+
       - name: Trigger pkg.go.dev indexing
         run: |
           VERSION=${GITHUB_REF#refs/tags/}

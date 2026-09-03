@@ -3,13 +3,14 @@ Comprehensive tests for Auth & Authorization Framework
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from auth_framework import (
     Auth, User, Token, Session, PolicyRule, Policy,
     TokenType, AuthMethod,
     LocalAuthProvider, APIKeyAuthProvider,
     PBKDF2Hasher, SimpleJWTGenerator, OpaqueTokenGenerator,
     PolicyEngine, SessionManager,
+    FixedClock,
 )
 
 
@@ -73,14 +74,14 @@ def test_token_expiry():
         value="token123",
         type=TokenType.JWT,
         user_id="user123",
-        expires_at=datetime.utcnow() - timedelta(hours=1)
+        expires_at=datetime.now(timezone.utc) - timedelta(hours=1)
     )
     
     valid_token = Token(
         value="token456",
         type=TokenType.JWT,
         user_id="user123",
-        expires_at=datetime.utcnow() + timedelta(hours=1)
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1)
     )
     
     assert expired_token.is_expired()
@@ -93,7 +94,7 @@ def test_token_time_until_expiry():
         value="token123",
         type=TokenType.JWT,
         user_id="user123",
-        expires_at=datetime.utcnow() + timedelta(hours=1)
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1)
     )
     
     time_left = token.time_until_expiry()
@@ -125,13 +126,13 @@ def test_session_expiry():
     expired_session = Session(
         id="session123",
         user_id="user123",
-        expires_at=datetime.utcnow() - timedelta(hours=1)
+        expires_at=datetime.now(timezone.utc) - timedelta(hours=1)
     )
     
     valid_session = Session(
         id="session456",
         user_id="user123",
-        expires_at=datetime.utcnow() + timedelta(hours=1)
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1)
     )
     
     assert expired_session.is_expired()
@@ -140,13 +141,13 @@ def test_session_expiry():
 
 def test_session_touch():
     """Test session last activity update."""
-    session = Session(id="session123", user_id="user123")
+    clock = FixedClock()
+    session = Session(id="session123", user_id="user123", clock=clock)
     original_time = session.last_activity
-    
-    import time
-    time.sleep(0.01)  # Small delay
+
+    clock.advance(1)
     session.touch()
-    
+
     assert session.last_activity > original_time
 
 
@@ -536,7 +537,7 @@ def test_session_manager_cleanup_expired():
 
 def test_auth_initialization():
     """Test Auth initialization."""
-    auth = Auth()
+    auth = Auth(secret="test_secret")
     
     assert auth.secret is not None
     assert auth.token_type == TokenType.JWT
@@ -546,7 +547,7 @@ def test_auth_initialization():
 
 def test_auth_add_provider():
     """Test adding authentication providers."""
-    auth = Auth()
+    auth = Auth(secret="test_secret")
     provider = LocalAuthProvider()
     
     auth.add_provider("local", provider)
@@ -556,7 +557,7 @@ def test_auth_add_provider():
 
 def test_auth_login_flow():
     """Test complete login flow."""
-    auth = Auth()
+    auth = Auth(secret="test_secret")
     provider = LocalAuthProvider()
     auth.add_provider("local", provider)
     
@@ -575,7 +576,7 @@ def test_auth_login_flow():
 
 def test_auth_login_invalid_credentials():
     """Test login with invalid credentials."""
-    auth = Auth()
+    auth = Auth(secret="test_secret")
     provider = LocalAuthProvider()
     auth.add_provider("local", provider)
     
@@ -588,7 +589,7 @@ def test_auth_login_invalid_credentials():
 
 def test_auth_verify_token():
     """Test token verification."""
-    auth = Auth()
+    auth = Auth(secret="test_secret")
     provider = LocalAuthProvider()
     auth.add_provider("local", provider)
     
@@ -603,7 +604,7 @@ def test_auth_verify_token():
 
 def test_auth_token_revocation():
     """Test token revocation."""
-    auth = Auth()
+    auth = Auth(secret="test_secret")
     provider = LocalAuthProvider()
     auth.add_provider("local", provider)
     
@@ -624,23 +625,23 @@ def test_auth_token_revocation():
 
 def test_auth_refresh_token():
     """Test token refresh."""
-    import time
-    
-    auth = Auth()
+    clock = FixedClock()
+
+    auth = Auth(secret="test_secret", clock=clock)
     provider = LocalAuthProvider()
     auth.add_provider("local", provider)
-    
+
     provider.register_user(username="alice", password="secure_password")
     result = auth.login("local", {"username": "alice", "password": "secure_password"})
-    
+
     refresh_token = result["refresh_token"]
-    
-    # Small delay to ensure different timestamp
-    time.sleep(1)
-    
+
+    # Advance clock to ensure a different timestamp
+    clock.advance(1)
+
     # Refresh token
     new_tokens = auth.refresh_token(refresh_token)
-    
+
     assert new_tokens is not None
     assert "access_token" in new_tokens
     assert new_tokens["access_token"] != result["access_token"]
@@ -648,7 +649,7 @@ def test_auth_refresh_token():
 
 def test_auth_check_permission():
     """Test permission checking."""
-    auth = Auth()
+    auth = Auth(secret="test_secret")
     
     # Add role permission
     auth.policy_engine.add_role_permission("admin", "read:*")
@@ -665,7 +666,7 @@ def test_auth_check_permission():
 
 def test_auth_opaque_tokens():
     """Test Auth with opaque tokens."""
-    auth = Auth(token_type=TokenType.OPAQUE)
+    auth = Auth(secret="test_secret", token_type=TokenType.OPAQUE)
     provider = LocalAuthProvider()
     auth.add_provider("local", provider)
     

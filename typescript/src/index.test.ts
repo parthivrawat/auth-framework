@@ -526,7 +526,7 @@ describe('SessionManager', () => {
 
 describe('Auth', () => {
   it('should initialize correctly', () => {
-    const auth = new Auth();
+    const auth = new Auth('test_secret');
 
     expect(auth).toBeDefined();
     expect(auth.policyEngine).toBeDefined();
@@ -534,7 +534,7 @@ describe('Auth', () => {
   });
 
   it('should add providers', () => {
-    const auth = new Auth();
+    const auth = new Auth('test_secret');
     const provider = new LocalAuthProvider();
 
     auth.addProvider('local', provider);
@@ -544,7 +544,7 @@ describe('Auth', () => {
   });
 
   it('should complete login flow', async () => {
-    const auth = new Auth();
+    const auth = new Auth('test_secret');
     const provider = new LocalAuthProvider();
     auth.addProvider('local', provider);
 
@@ -565,7 +565,7 @@ describe('Auth', () => {
   });
 
   it('should reject invalid credentials', async () => {
-    const auth = new Auth();
+    const auth = new Auth('test_secret');
     const provider = new LocalAuthProvider();
     auth.addProvider('local', provider);
 
@@ -580,7 +580,7 @@ describe('Auth', () => {
   });
 
   it('should verify tokens', async () => {
-    const auth = new Auth();
+    const auth = new Auth('test_secret');
     const provider = new LocalAuthProvider();
     auth.addProvider('local', provider);
 
@@ -597,7 +597,7 @@ describe('Auth', () => {
   });
 
   it('should revoke tokens', async () => {
-    const auth = new Auth();
+    const auth = new Auth('test_secret');
     const provider = new LocalAuthProvider();
     auth.addProvider('local', provider);
 
@@ -620,7 +620,7 @@ describe('Auth', () => {
   });
 
   it('should refresh tokens', async () => {
-    const auth = new Auth();
+    const auth = new Auth('test_secret');
     const provider = new LocalAuthProvider();
     auth.addProvider('local', provider);
 
@@ -644,7 +644,7 @@ describe('Auth', () => {
   });
 
   it('should check permissions', () => {
-    const auth = new Auth();
+    const auth = new Auth('test_secret');
 
     // Add role permission
     auth.policyEngine.addRolePermission('admin', 'read:*');
@@ -661,7 +661,7 @@ describe('Auth', () => {
   });
 
   it('should work with opaque tokens', async () => {
-    const auth = new Auth(undefined, TokenType.OPAQUE);
+    const auth = new Auth('test_secret', TokenType.OPAQUE);
     const provider = new LocalAuthProvider();
     auth.addProvider('local', provider);
 

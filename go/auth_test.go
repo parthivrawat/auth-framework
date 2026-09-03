@@ -230,7 +230,7 @@ func TestSessionManager(t *testing.T) {
 }
 
 func TestAuthLogin(t *testing.T) {
-	auth := NewAuth("test_secret", TokenTypeJWT)
+	auth, _ := NewAuth("test_secret", TokenTypeJWT)
 	provider := NewLocalAuthProvider()
 	auth.AddProvider("local", provider)
 
@@ -257,7 +257,7 @@ func TestAuthLogin(t *testing.T) {
 }
 
 func TestAuthTokenVerification(t *testing.T) {
-	auth := NewAuth("test_secret", TokenTypeJWT)
+	auth, _ := NewAuth("test_secret", TokenTypeJWT)
 	provider := NewLocalAuthProvider()
 	auth.AddProvider("local", provider)
 
@@ -277,7 +277,7 @@ func TestAuthTokenVerification(t *testing.T) {
 }
 
 func TestAuthTokenRevocation(t *testing.T) {
-	auth := NewAuth("test_secret", TokenTypeJWT)
+	auth, _ := NewAuth("test_secret", TokenTypeJWT)
 	provider := NewLocalAuthProvider()
 	auth.AddProvider("local", provider)
 
@@ -302,7 +302,7 @@ func TestAuthTokenRevocation(t *testing.T) {
 }
 
 func TestAuthPermissionCheck(t *testing.T) {
-	auth := NewAuth("test_secret", TokenTypeJWT)
+	auth, _ := NewAuth("test_secret", TokenTypeJWT)
 
 	auth.PolicyEngine.AddRolePermission("admin", "read:*")
 

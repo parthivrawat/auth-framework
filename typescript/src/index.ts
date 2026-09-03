@@ -33,6 +33,13 @@ export enum AuthMethod {
   API_KEY = 'api_key',
 }
 
+export class AuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AuthError';
+  }
+}
+
 export interface User {
   id: string;
   username: string;
@@ -199,17 +206,98 @@ export class PolicyRuleImpl implements PolicyRule {
   }
 
   private wildcardMatch(pattern: string, value: string): boolean {
-    if (!pattern.includes('*')) {
-      return pattern === value;
+    const p = pattern.split('');
+    const s = value.split('');
+    let pi = 0;
+    let si = 0;
+    let starP: number | null = null;
+    let starS: number | null = null;
+
+    while (si < s.length) {
+      if (pi < p.length && (p[pi] === s[si] || p[pi] === '?')) {
+        pi++;
+        si++;
+      } else if (pi < p.length && p[pi] === '*') {
+        starP = pi;
+        starS = si;
+        pi++;
+      } else if (starP !== null && starS !== null) {
+        pi = starP + 1;
+        starS++;
+        si = starS;
+      } else {
+        return false;
+      }
     }
 
-    const parts = pattern.split('*');
-    if (parts.length === 2) {
-      const [prefix, suffix] = parts;
-      return value.startsWith(prefix) && value.endsWith(suffix);
+    while (pi < p.length && p[pi] === '*') {
+      pi++;
     }
 
-    return false;
+    return pi === p.length;
+  }
+}
+
+// ============================================================================
+// Storage Backend
+// ============================================================================
+
+export interface StorageBackend {
+  get(key: string): any | undefined;
+  set(key: string, value: any, ttl?: number): boolean;
+  delete(key: string): boolean;
+  has(key: string): boolean;
+  keys(prefix?: string): string[];
+  clear(): void;
+}
+
+export class InMemoryStorage implements StorageBackend {
+  private store: Map<string, { value: any; expiresAt?: number }> = new Map();
+
+  get(key: string): any | undefined {
+    const entry = this.store.get(key);
+    if (!entry) {
+      return undefined;
+    }
+    if (entry.expiresAt !== undefined && Date.now() > entry.expiresAt) {
+      this.store.delete(key);
+      return undefined;
+    }
+    return entry.value;
+  }
+
+  set(key: string, value: any, ttl?: number): boolean {
+    const expiresAt = typeof ttl === 'number' && ttl > 0 ? Date.now() + ttl * 1000 : undefined;
+    this.store.set(key, { value, expiresAt });
+    return true;
+  }
+
+  delete(key: string): boolean {
+    return this.store.delete(key);
+  }
+
+  has(key: string): boolean {
+    const entry = this.store.get(key);
+    if (!entry) {
+      return false;
+    }
+    if (entry.expiresAt !== undefined && Date.now() > entry.expiresAt) {
+      this.store.delete(key);
+      return false;
+    }
+    return true;
+  }
+
+  keys(prefix?: string): string[] {
+    const allKeys = Array.from(this.store.keys());
+    if (!prefix) {
+      return allKeys;
+    }
+    return allKeys.filter(k => k.startsWith(prefix));
+  }
+
+  clear(): void {
+    this.store.clear();
   }
 }
 
@@ -264,29 +352,44 @@ export class PBKDF2Hasher implements PasswordHasher {
 // ============================================================================
 
 export interface TokenGenerator {
-  generate(user: User, expiresIn?: number): Promise<Token>;
+  generate(user: User, expiresIn?: number, metadata?: Record<string, any>): Promise<Token>;
   verify(tokenValue: string): Promise<Token | null>;
+  revoke(tokenValue: string): void;
+  isRevoked(tokenValue: string): boolean;
 }
 
 export class SimpleJWTGenerator implements TokenGenerator {
-  constructor(private secret: string) {}
+  constructor(
+    private secret: string,
+    private issuer?: string,
+    private audience?: string,
+    private keyId?: string,
+    private allowedAlgorithms: string[] = ['HS256'],
+    private storage: StorageBackend = new InMemoryStorage()
+  ) {}
 
-  async generate(user: User, expiresIn: number = 3600): Promise<Token> {
+  async generate(user: User, expiresIn: number = 3600, metadata: Record<string, any> = {}): Promise<Token> {
     const issuedAt = new Date();
     const expiresAt = new Date(issuedAt.getTime() + expiresIn * 1000);
 
-    const payload = {
+    const payload: Record<string, any> = {
       userId: user.id,
       username: user.username,
       roles: Array.from(user.roles),
       permissions: Array.from(user.permissions),
       tenantId: user.tenantId,
+      jti: crypto.randomBytes(16).toString('base64url'),
       iat: Math.floor(issuedAt.getTime() / 1000),
       exp: Math.floor(expiresAt.getTime() / 1000),
+      ...metadata,
     };
+    if (this.issuer) payload.iss = this.issuer;
+    if (this.audience) payload.aud = this.audience;
 
     // Create simple JWT: base64(header).base64(payload).signature
-    const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
+    const headerObj: Record<string, any> = { alg: 'HS256', typ: 'JWT' };
+    if (this.keyId) headerObj.kid = this.keyId;
+    const header = Buffer.from(JSON.stringify(headerObj))
       .toString('base64url');
     const payloadB64 = Buffer.from(JSON.stringify(payload))
       .toString('base64url');
@@ -298,14 +401,22 @@ export class SimpleJWTGenerator implements TokenGenerator {
       .digest('base64url');
 
     const tokenValue = `${message}.${signature}`;
+    const tokenType = metadata?.fid ? TokenType.REFRESH : TokenType.JWT;
 
     return new TokenImpl(
       tokenValue,
-      TokenType.JWT,
+      tokenType,
       user.id,
       expiresAt,
       issuedAt,
-      { roles: Array.from(user.roles), permissions: Array.from(user.permissions) }
+      {
+        username: user.username,
+        jti: payload.jti,
+        roles: Array.from(user.roles),
+        permissions: Array.from(user.permissions),
+        tenantId: user.tenantId,
+        ...metadata,
+      }
     );
   }
 
@@ -317,6 +428,15 @@ export class SimpleJWTGenerator implements TokenGenerator {
       }
 
       const [headerB64, payloadB64, signatureB64] = parts;
+
+      // Decode and validate header
+      const header = JSON.parse(Buffer.from(headerB64, 'base64url').toString());
+      if (!this.allowedAlgorithms.includes(header.alg)) {
+        return null;
+      }
+      if (this.keyId && header.kid !== this.keyId) {
+        return null;
+      }
 
       // Verify signature
       const message = `${headerB64}.${payloadB64}`;
@@ -335,21 +455,36 @@ export class SimpleJWTGenerator implements TokenGenerator {
       // Decode payload
       const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString());
 
+      if (this.issuer && payload.iss !== this.issuer) {
+        return null;
+      }
+      if (this.audience && payload.aud !== this.audience) {
+        return null;
+      }
+      if (!payload.jti) {
+        return null;
+      }
+
       const issuedAt = new Date(payload.iat * 1000);
       const expiresAt = new Date(payload.exp * 1000);
+      const tokenType = payload.fid ? TokenType.REFRESH : TokenType.JWT;
+
+      const metadata: Record<string, any> = {
+        username: payload.username,
+        jti: payload.jti,
+        roles: payload.roles || [],
+        permissions: payload.permissions || [],
+        tenantId: payload.tenantId,
+      };
+      if (payload.fid) metadata.fid = payload.fid;
 
       const token = new TokenImpl(
         tokenValue,
-        TokenType.JWT,
+        tokenType,
         payload.userId,
         expiresAt,
         issuedAt,
-        {
-          username: payload.username,
-          roles: payload.roles || [],
-          permissions: payload.permissions || [],
-          tenantId: payload.tenantId,
-        }
+        metadata
       );
 
       // Check expiry
@@ -362,19 +497,40 @@ export class SimpleJWTGenerator implements TokenGenerator {
       return null;
     }
   }
+
+  revoke(tokenValue: string): void {
+    try {
+      const parts = tokenValue.split('.');
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+        if (payload.fid) {
+          const familyKeys = this.storage.keys(`refreshFamily:${payload.fid}`);
+          for (const key of familyKeys) {
+            this.storage.delete(key);
+          }
+        }
+      }
+    } catch {}
+    this.storage.set(`revoked:${tokenValue}`, true);
+  }
+
+  isRevoked(tokenValue: string): boolean {
+    return this.storage.has(`revoked:${tokenValue}`);
+  }
 }
 
 export class OpaqueTokenGenerator implements TokenGenerator {
-  private tokens: Map<string, Token> = new Map();
+  constructor(private storage: StorageBackend = new InMemoryStorage()) {}
 
-  async generate(user: User, expiresIn: number = 3600): Promise<Token> {
+  async generate(user: User, expiresIn: number = 3600, metadata: Record<string, any> = {}): Promise<Token> {
     const tokenValue = crypto.randomBytes(32).toString('base64url');
     const issuedAt = new Date();
     const expiresAt = new Date(issuedAt.getTime() + expiresIn * 1000);
+    const tokenType = metadata?.fid ? TokenType.REFRESH : TokenType.OPAQUE;
 
     const token = new TokenImpl(
       tokenValue,
-      TokenType.OPAQUE,
+      tokenType,
       user.id,
       expiresAt,
       issuedAt,
@@ -383,15 +539,19 @@ export class OpaqueTokenGenerator implements TokenGenerator {
         roles: Array.from(user.roles),
         permissions: Array.from(user.permissions),
         tenantId: user.tenantId,
+        ...metadata,
       }
     );
 
-    this.tokens.set(tokenValue, token);
+    this.storage.set(`token:${tokenValue}`, token, expiresIn);
     return token;
   }
 
   async verify(tokenValue: string): Promise<Token | null> {
-    const token = this.tokens.get(tokenValue);
+    if (this.isRevoked(tokenValue)) {
+      return null;
+    }
+    const token = this.storage.get(`token:${tokenValue}`) as Token | undefined;
     if (!token || token.isExpired()) {
       return null;
     }
@@ -399,7 +559,20 @@ export class OpaqueTokenGenerator implements TokenGenerator {
   }
 
   revoke(tokenValue: string): void {
-    this.tokens.delete(tokenValue);
+    const token = this.storage.get(`token:${tokenValue}`) as Token | undefined;
+    const fid = token?.metadata?.fid;
+    if (fid) {
+      const familyKeys = this.storage.keys(`refreshFamily:${fid}`);
+      for (const key of familyKeys) {
+        this.storage.delete(key);
+      }
+    }
+    this.storage.set(`revoked:${tokenValue}`, true);
+    this.storage.delete(`token:${tokenValue}`);
+  }
+
+  isRevoked(tokenValue: string): boolean {
+    return this.storage.has(`revoked:${tokenValue}`);
   }
 }
 
@@ -423,21 +596,24 @@ export class LocalAuthProvider implements AuthProvider {
     roles: Set<string> = new Set(),
     permissions: Set<string> = new Set(),
     tenantId?: string
-  ): Promise<User> {
+  ): Promise<User | null> {
     const userId = crypto.randomBytes(16).toString('base64url');
     const hashedPassword = await this.passwordHasher.hash(password);
+
+    const userRoles = new Set(roles ?? []);
+    const userPermissions = new Set(permissions ?? []);
 
     this.users.set(username, {
       id: userId,
       username,
       email,
       password: hashedPassword,
-      roles,
-      permissions,
+      roles: userRoles,
+      permissions: userPermissions,
       tenantId,
     });
 
-    return new UserImpl(userId, username, email, roles, permissions, {}, tenantId);
+    return new UserImpl(userId, username, email, userRoles, userPermissions, {}, tenantId);
   }
 
   async authenticate(credentials: Record<string, any>): Promise<User | null> {
@@ -512,6 +688,31 @@ export class PolicyEngine {
   }
 
   check(user: User, action: string, resource: string, context?: Record<string, any>): boolean {
+    // First pass: explicit deny rules override everything
+    for (const rule of this.rules) {
+      if (rule.matches(`user:${user.username}`, action, resource, context)) {
+        if (rule.effect === 'deny') {
+          return false;
+        }
+        continue;
+      }
+      const hasRoleMatch = Array.from(user.roles).some(role =>
+        rule.matches(`role:${role}`, action, resource, context)
+      );
+      if (hasRoleMatch) {
+        if (rule.effect === 'deny') {
+          return false;
+        }
+        continue;
+      }
+      if (rule.matches('*', action, resource, context)) {
+        if (rule.effect === 'deny') {
+          return false;
+        }
+        continue;
+      }
+    }
+
     // Check direct permissions
     if (user.hasPermission(`${action}:${resource}`)) {
       return true;
@@ -525,21 +726,14 @@ export class PolicyEngine {
       }
     }
 
-    // Check policy rules
+    // Second pass: allow rules
     for (const rule of this.rules) {
-      // Check user-specific rules
       if (rule.matches(`user:${user.username}`, action, resource, context)) {
         return rule.effect === 'allow';
       }
-
-      // Check role-based rules
-      for (const role of user.roles) {
-        if (rule.matches(`role:${role}`, action, resource, context)) {
-          return rule.effect === 'allow';
-        }
+      if (Array.from(user.roles).some(role => rule.matches(`role:${role}`, action, resource, context))) {
+        return rule.effect === 'allow';
       }
-
-      // Check wildcard rules
       if (rule.matches('*', action, resource, context)) {
         return rule.effect === 'allow';
       }
@@ -554,9 +748,10 @@ export class PolicyEngine {
 // ============================================================================
 
 export class SessionManager {
-  private sessions: Map<string, Session> = new Map();
-
-  constructor(private defaultTtl: number = 3600) {}
+  constructor(
+    private defaultTtl: number = 3600,
+    private storage: StorageBackend = new InMemoryStorage()
+  ) {}
 
   createSession(
     userId: string,
@@ -586,12 +781,17 @@ export class SessionManager {
       expiresAt
     );
 
-    this.sessions.set(sessionId, session);
+    this.storage.set(`session:${sessionId}`, session, actualTtl);
+
+    const userSessionIds = (this.storage.get(`userSessions:${userId}`) as Set<string> | undefined) || new Set<string>();
+    userSessionIds.add(sessionId);
+    this.storage.set(`userSessions:${userId}`, userSessionIds);
+
     return session;
   }
 
   getSession(sessionId: string): Session | null {
-    const session = this.sessions.get(sessionId);
+    const session = this.storage.get(`session:${sessionId}`) as Session | undefined;
     if (session && !session.isExpired()) {
       session.touch();
       return session;
@@ -600,27 +800,39 @@ export class SessionManager {
   }
 
   revokeSession(sessionId: string): void {
-    this.sessions.delete(sessionId);
+    const session = this.storage.get(`session:${sessionId}`) as Session | undefined;
+    if (session) {
+      const userSessionIds = this.storage.get(`userSessions:${session.userId}`) as Set<string> | undefined;
+      if (userSessionIds) {
+        userSessionIds.delete(sessionId);
+        this.storage.set(`userSessions:${session.userId}`, userSessionIds);
+      }
+    }
+    this.storage.delete(`session:${sessionId}`);
   }
 
   revokeUserSessions(userId: string): void {
-    const toRemove: string[] = [];
-    for (const [sid, session] of this.sessions.entries()) {
-      if (session.userId === userId) {
-        toRemove.push(sid);
+    const userSessionIds = this.storage.get(`userSessions:${userId}`) as Set<string> | undefined;
+    if (userSessionIds) {
+      for (const sid of userSessionIds) {
+        this.storage.delete(`session:${sid}`);
       }
     }
-    toRemove.forEach(sid => this.sessions.delete(sid));
+    this.storage.delete(`userSessions:${userId}`);
   }
 
   cleanupExpired(): void {
-    const toRemove: string[] = [];
-    for (const [sid, session] of this.sessions.entries()) {
-      if (session.isExpired()) {
-        toRemove.push(sid);
+    const sessionKeys = this.storage.keys('session:');
+    const expiredSessionIds: string[] = [];
+    for (const key of sessionKeys) {
+      const session = this.storage.get(key) as Session | undefined;
+      if (session && session.isExpired()) {
+        expiredSessionIds.push(session.id);
       }
     }
-    toRemove.forEach(sid => this.sessions.delete(sid));
+    for (const sid of expiredSessionIds) {
+      this.revokeSession(sid);
+    }
   }
 }
 
@@ -635,6 +847,7 @@ export interface LoginResult {
   tokenType: string;
   expiresIn: number;
   sessionId?: string;
+  familyId?: string;
 }
 
 export class Auth {
@@ -642,24 +855,37 @@ export class Auth {
   private tokenGenerator: TokenGenerator;
   public policyEngine: PolicyEngine;
   public sessionManager: SessionManager;
-  private revokedTokens: Set<string> = new Set();
+  private storage: StorageBackend;
+  private secret: string;
 
   constructor(
-    private secret: string = crypto.randomBytes(32).toString('base64url'),
-    tokenType: TokenType = TokenType.JWT
+    secret: string,
+    tokenType: TokenType = TokenType.JWT,
+    private issuer?: string,
+    private audience?: string,
+    private keyId?: string,
+    private allowedAlgorithms: string[] = ['HS256'],
+    storage?: StorageBackend
   ) {
+    if (!secret) {
+      throw new AuthError(
+        'A secret must be provided as the first positional argument.'
+      );
+    }
+    this.secret = secret;
+    this.storage = storage || new InMemoryStorage();
     this.tokenGenerator = this.createTokenGenerator(tokenType);
     this.policyEngine = new PolicyEngine();
-    this.sessionManager = new SessionManager();
+    this.sessionManager = new SessionManager(3600, this.storage);
   }
 
   private createTokenGenerator(tokenType: TokenType): TokenGenerator {
     if (tokenType === TokenType.JWT) {
-      return new SimpleJWTGenerator(this.secret);
+      return new SimpleJWTGenerator(this.secret, this.issuer, this.audience, this.keyId, this.allowedAlgorithms, this.storage);
     } else if (tokenType === TokenType.OPAQUE) {
-      return new OpaqueTokenGenerator();
+      return new OpaqueTokenGenerator(this.storage);
     } else {
-      throw new Error(`Unsupported token type: ${tokenType}`);
+      throw new AuthError(`Unsupported token type: ${tokenType}`);
     }
   }
 
@@ -670,7 +896,7 @@ export class Auth {
   async authenticate(providerName: string, credentials: Record<string, any>): Promise<User | null> {
     const provider = this.providers.get(providerName);
     if (!provider) {
-      throw new Error(`Unknown provider: ${providerName}`);
+      throw new AuthError(`Unknown provider: ${providerName}`);
     }
 
     return provider.authenticate(credentials);
@@ -680,25 +906,31 @@ export class Auth {
     providerName: string,
     credentials: Record<string, any>,
     createSession: boolean = true,
-    tokenTtl: number = 3600
+    ttl: number = 3600
   ): Promise<LoginResult | null> {
     const user = await this.authenticate(providerName, credentials);
     if (!user) {
       return null;
     }
 
-    // Generate access token
-    const accessToken = await this.tokenGenerator.generate(user, tokenTtl);
+    const familyId = crypto.randomUUID();
 
-    // Generate refresh token (longer TTL)
-    const refreshToken = await this.tokenGenerator.generate(user, tokenTtl * 24);
+    // Generate access token
+    const accessToken = await this.tokenGenerator.generate(user, ttl);
+
+    // Generate refresh token (longer TTL) with a family binding
+    const refreshToken = await this.tokenGenerator.generate(user, ttl * 24, { fid: familyId });
+
+    // Store the active refresh token for this family
+    this.storage.set(`refreshFamily:${familyId}`, refreshToken.value, ttl * 24);
 
     const result: LoginResult = {
       user,
       accessToken: accessToken.value,
       refreshToken: refreshToken.value,
       tokenType: 'Bearer',
-      expiresIn: tokenTtl,
+      expiresIn: ttl,
+      familyId,
     };
 
     // Create session if requested
@@ -716,7 +948,7 @@ export class Auth {
   }
 
   async verifyToken(tokenValue: string): Promise<Token | null> {
-    if (this.revokedTokens.has(tokenValue)) {
+    if (this.tokenGenerator.isRevoked(tokenValue)) {
       return null;
     }
 
@@ -724,15 +956,28 @@ export class Auth {
   }
 
   revokeToken(tokenValue: string): void {
-    this.revokedTokens.add(tokenValue);
+    this.tokenGenerator.revoke(tokenValue);
   }
 
-  async refreshToken(
+  async refresh(refreshTokenValue: string): Promise<LoginResult | null> {
+    return this.performRefresh(refreshTokenValue, 3600);
+  }
+
+  private async performRefresh(
     refreshTokenValue: string,
-    tokenTtl: number = 3600
-  ): Promise<{ accessToken: string; tokenType: string; expiresIn: number } | null> {
+    tokenTtl: number
+  ): Promise<LoginResult | null> {
     const token = await this.verifyToken(refreshTokenValue);
-    if (!token) {
+    if (!token || token.type !== TokenType.REFRESH || !token.metadata?.fid) {
+      return null;
+    }
+
+    const familyId = token.metadata.fid as string;
+    const activeToken = this.storage.get(`refreshFamily:${familyId}`) as string | undefined;
+
+    // Reuse detection: the presented token is not the active one for the family
+    if (!activeToken || activeToken !== refreshTokenValue) {
+      this.revokeToken(refreshTokenValue);
       return null;
     }
 
@@ -747,13 +992,33 @@ export class Auth {
       token.metadata?.tenantId
     );
 
-    // Generate new access token
+    // Generate new access token and a rotated refresh token with the same family
     const newAccessToken = await this.tokenGenerator.generate(user, tokenTtl);
+    const newRefreshToken = await this.tokenGenerator.generate(user, tokenTtl * 24, { fid: familyId });
+
+    // Store the new active refresh token for this family
+    this.storage.set(`refreshFamily:${familyId}`, newRefreshToken.value, tokenTtl * 24);
 
     return {
+      user,
       accessToken: newAccessToken.value,
+      refreshToken: newRefreshToken.value,
       tokenType: 'Bearer',
       expiresIn: tokenTtl,
+      familyId,
+    };
+  }
+
+  async refreshToken(
+    refreshTokenValue: string,
+    tokenTtl: number = 3600
+  ): Promise<{ accessToken: string; tokenType: string; expiresIn: number } | null> {
+    const result = await this.performRefresh(refreshTokenValue, tokenTtl);
+    if (!result) return null;
+    return {
+      accessToken: result.accessToken,
+      tokenType: result.tokenType,
+      expiresIn: result.expiresIn,
     };
   }
 

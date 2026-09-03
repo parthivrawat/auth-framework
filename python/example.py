@@ -18,7 +18,7 @@ def main():
     # 1. Initialize Auth Framework
     # ========================================================================
     print("1. Initializing Auth Framework...")
-    auth = Auth()
+    auth = Auth(secret="change-me-in-production")
     
     # Add local authentication provider
     local_provider = LocalAuthProvider()
